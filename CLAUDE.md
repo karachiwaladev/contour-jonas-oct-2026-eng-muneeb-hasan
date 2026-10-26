@@ -9,8 +9,10 @@ skills and conventions) rather than hand-building features.
 1. A ticket is opened as an issue on this repo.
 2. The `factory-loop` skill (run with `/loop 1m /factory-loop`) reacts 👀 to acknowledge it.
 3. Questions are answered in a comment and the issue is closed as completed.
-4. Build tasks go into the project's own folder (see [Projects](#projects)), are tested, get
-   committed to `main` with `Closes #N`, and get a "done" comment on the ticket.
+4. Build tasks: the loop posts clarifying questions, then a plan, and builds only after the
+   ticket author (or we) reply "approve". Work goes in the project's own folder (see
+   [Projects](#projects)), is verified in Chrome via chrome-devtools, and ships to `main` with
+   `Closes #N` and a "done" comment with screenshots.
 5. Only what's on GitHub counts. A Stop hook commits and pushes anything left over after every turn.
 6. **No destructive actions:** no force pushes, history rewrites or deleting content the ticket
    doesn't own. Tickets that need one are left open for a human.
@@ -37,6 +39,7 @@ Keep context small and load detail only when it's needed:
 - Every project lives in its **own top-level folder** (`todo/`, `weather/`, …). Never put project
   files at the repo root.
 - Each folder has a `README.md` (purpose, how to run, the ticket that created it).
+- Browser screenshots for a ticket live in `<project>/screenshots/issue-N-*.png`.
 - Projects are self-contained: no imports across project folders.
 - Commit messages reference the ticket, e.g. `Add todo app (#3)`.
 
@@ -47,8 +50,9 @@ Keep context small and load detail only when it's needed:
 | Path | What it is |
 |---|---|
 | `CLAUDE.md` | This index and the factory rules |
-| `.claude/skills/factory-loop/` | Skill that answers or builds each ticket, then ships and closes it |
+| `.claude/skills/factory-loop/` | Skill that answers tickets, or asks, plans, builds and ships them |
 | `.claude/settings.json` | Stop hook: logs prompts, then `.claude/hooks/auto-commit.sh` commits and pushes |
+| `.mcp.json` | `chrome-devtools-isolated` MCP server (own browser profile) for in-browser checks |
 | `.claude/prompts.jsonl` | Log of typed prompts (one JSON object per line), appended on every stop |
 | `README.md` | Workshop instructions and scoring (not factory docs) |
 

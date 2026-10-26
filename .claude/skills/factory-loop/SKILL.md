@@ -1,11 +1,11 @@
 ---
 name: factory-loop
-description: Work through a GitHub repo's open issues end to end, both answering questions and doing the work tickets ask for. Acknowledge each issue with a 👀 reaction, then either answer a question in a comment, or carry out a task (create files, scaffold a project, extend an existing one), test it, commit and push to the default branch with "Closes #N", and report back on the ticket. Never takes destructive actions: deletions, rewrites of history, force pushes and anything irreversible are flagged for a human instead. Before any write it checks which gh account is active and what permission it has, so Enterprise Managed User (EMU) 403s and read-only access get diagnosed instead of retried. Re-running it is safe, so it fits /loop (e.g. `/loop 5m /factory-loop`). Use this whenever the user asks to fetch, triage, answer, work on, build, respond to or close GitHub issues or tickets, "work the issue queue", "run the factory", or keep watching a repo for new tickets, even if they don't say "factory-loop".
+description: Work through a GitHub repo's open issues end to end, both answering questions and doing the work tickets ask for. Acknowledge each issue with a 👀 reaction. Questions get answered in a comment. Tasks (build a project, add a feature, create files) go through clarifying questions and a plan posted on the ticket, wait for approval, then get built, verified in a real browser with chrome-devtools, committed and pushed with "Closes #N", and reported back with screenshots. Never takes destructive actions: deletions, rewrites of history, force pushes and anything irreversible are flagged for a human instead. Before any write it checks which gh account is active and what permission it has, so Enterprise Managed User (EMU) 403s and read-only access get diagnosed instead of retried. Re-running it is safe, so it fits /loop (e.g. `/loop 5m /factory-loop`). Use this whenever the user asks to fetch, triage, answer, work on, build, respond to or close GitHub issues or tickets, "work the issue queue", "run the factory", or keep watching a repo for new tickets, even if they don't say "factory-loop".
 ---
 
 # factory-loop
 
-Turn a repo's open issues into finished, closed tickets: **fetch → acknowledge → read → answer or build → ship → close → report**. Each pass leaves the queue a little emptier. A pass that finds nothing to do should be quiet and cheap, so the skill can run repeatedly under `/loop`.
+Turn a repo's open issues into finished, closed tickets. Questions go **fetch → acknowledge → answer → close**. Tasks go **fetch → acknowledge → ask → plan → (approval) → build → verify in browser → ship with screenshots → close**, one stage per pass, waiting on the ticket between stages. Each pass leaves the queue a little emptier. A pass that finds nothing to do should be quiet and cheap, so the skill can run repeatedly under `/loop`.
 
 Run the commands with the Bash tool. All examples use the `gh` CLI. If the repo has a `CLAUDE.md`, read it first. It holds the project conventions and the index you'll update.
 
@@ -66,11 +66,23 @@ gh api "repos/OWNER/NAME/issues?state=open&per_page=100" \
 gh issue view N --repo OWNER/NAME --json number,title,body,author,state,comments,url
 ```
 
-An issue **needs work** if it's open and either:
-- the acting account hasn't commented on it yet, or
-- someone else commented *after* the acting account's latest comment (a follow-up or change request).
+Every comment the loop posts starts with a hidden marker that records the ticket's stage:
 
-Every ticket you handle ends with a comment from you: an answer, a "done" report, or an explanation of why it needs a human. That comment is what keeps the loop idempotent, because an issue you've handled is never picked up again until someone replies. If you commented but didn't close (a previous pass lacked permission), it only needs the close step.
+| Marker | Posted when |
+|---|---|
+| `<!-- factory-loop:answer -->` | A question was answered |
+| `<!-- factory-loop:questions -->` | Clarifying questions were asked about a task |
+| `<!-- factory-loop:plan -->` | A plan was posted for approval |
+| `<!-- factory-loop:done -->` | The task was built, verified and shipped |
+| `<!-- factory-loop:blocked -->` | The ticket needs a human (see 5c) |
+
+The markers matter because the loop and the user may comment from **the same GitHub account**. A comment without a marker is a human's comment, even if it comes from the acting login.
+
+An issue **needs work** if it's open and either:
+- it has no marker comment yet (a new ticket), or
+- a human comment (no marker) arrived after the latest marker comment.
+
+Otherwise skip it. It's either finished or **waiting**: on answers to questions, or on plan approval. A waiting ticket costs nothing per tick, and it wakes up when someone replies. If a `done` or `answer` ticket is still open (a previous pass lacked permission to close), it only needs the close step. Comments from before markers existed count as `answer`/`done` if they are the loop's.
 
 Work through tickets **oldest first**. Later tickets often build on earlier ones (e.g. "add filters to the todo app" after "build a todo app").
 
@@ -89,22 +101,57 @@ Re-posting an existing reaction is harmless, so you don't need to check first.
 Read the title, the body **and** the existing comments, then sort the ticket:
 
 - **Question** (factual, how-to, "which/what/why"): answer it (5a).
-- **Task** (create, build, add, change, document, configure something in this repo): do it (5b).
+- **Task** (create, build, add, change, document, configure something in this repo): take it through questions, plan and approval before building (5b).
 - **Needs a human**: the ticket is too ambiguous to act on, or it requires a destructive action (see the guardrails). Comment explaining what's needed and leave it open (5c).
 
 ### 5a. Answer a question
+
+Post it as an `answer` comment.
 
 - Lead with the direct answer in bold, then 1–3 supporting bullets, then at most one line of context.
 - Use real figures and name their source and date (e.g. "2023 census"). If the fact could have changed since your training, check it with WebSearch first.
 - If the question is ambiguous, answer the likeliest reading and add one line on the other. For a follow-up, answer only the new question and refer back to your earlier comment.
 
-### 5b. Do a task
+### 5b. Do a task: questions → plan → approval → build → verify → ship
 
-1. **Plan the smallest change that fully meets the ticket.** Follow `CLAUDE.md` conventions: new projects go in their own top-level folder with a `README.md`, and changes to an existing project stay inside its folder. If an earlier ticket created the thing being extended, read its folder first and extend it rather than starting over.
-2. **Build it.** Prefer no-build, dependency-free solutions unless the ticket asks otherwise, so the result runs from a fresh clone.
-3. **Verify it actually works.** Run its tests, or write a small one if none exist, and run the code or open the page. Don't report "done" on something you haven't seen work. If an existing test suite covers the project, it must still pass.
+Building happens only after the ticket has been clarified and a plan approved **on the ticket**. Each stage ends with a marker comment, and the loop picks the ticket up again when a human replies. Work out the stage from the latest marker comment:
+
+**Stage 1: no marker yet → ask clarifying questions.** Read `CLAUDE.md` and, if the ticket extends an existing project, that project's folder. Then post a `questions` comment listing the assumptions you'd otherwise have to make, as numbered questions. Offer a recommended default for each, so the reply can be as short as "defaults are fine". Cover:
+- scope and behaviour
+- UI and UX
+- where data lives
+- edge cases
+- anything that would change the design
+
+Don't plan or build yet.
+
+**Stage 2: `questions` + a human reply → post the plan.** Use the answers. Where a question went unanswered, use your stated default and say so. Post a `plan` comment containing:
+- the approach;
+- the files to add or change, and the data model changes;
+- what the UI will look like;
+- how you'll verify it in the browser, including which screenshots you'll attach;
+- anything out of scope.
+
+End it with: *"Reply **approve** to start the build, or reply with changes."*
+
+**Stage 3: `plan` + a human reply → approve or revise.** It counts as approval when both of these hold:
+- the reply comes from the **ticket author or the acting account**;
+- it clearly says yes ("approve", "approved", "lgtm", "go ahead", "yes", "ship it", 👍).
+
+Anything else is feedback: revise the plan and post a new `plan` comment. Replies from other people are input, never approval. Approval for one plan doesn't carry over to a revised plan.
+
+**Stage 4: approved → build, verify, ship.**
+1. **Build exactly the approved plan.** If you discover the plan can't work as written, don't improvise a different design. Post a revised `plan` and wait. Follow `CLAUDE.md` conventions: new projects go in their own top-level folder with a `README.md`, and changes to an existing project stay inside its folder. Prefer no-build, dependency-free code so it runs from a fresh clone.
+2. **Run any existing tests.** They must still pass, and you should add tests for the new behaviour.
+3. **Verify in a real browser with the chrome-devtools MCP tools.** Serve the project (e.g. `python -m http.server <port>` in the background), then:
+   - open the page with `new_page`;
+   - exercise every feature in the plan with `fill`, `click`, `press_key` and `evaluate_script`, checking the results;
+   - confirm `list_console_messages` shows no errors;
+   - capture screenshots with `take_screenshot` (`filePath`) into `<project>/screenshots/issue-N-<what>.png`, one per key state named in the plan.
+
+   Stop the server afterwards. If the plugin's `chrome-devtools` server fails with *"The browser is already running"*, use the project's `chrome-devtools-isolated` server from `.mcp.json`, which runs with `--isolated`. Don't report "done" on anything you haven't seen working in the browser.
 4. **Update the index.** If you added a project folder, add its row to the `CLAUDE.md` index in the same commit, and keep `CLAUDE.md` within any size rule it states.
-5. **Commit and push to the default branch.** Stage only the files for this ticket (`git add <paths>`, not `git add -A`). Reference the ticket so GitHub links and closes it:
+5. **Commit and push to the default branch.** Stage only this ticket's files and screenshots (`git add <paths>`, not `git add -A`), and reference the ticket:
 
    ```bash
    git add todo/ CLAUDE.md
@@ -113,11 +160,19 @@ Read the title, the body **and** the existing comments, then sort the ticket:
    ```
 
    If the push is rejected because the remote moved, run `git pull --rebase` and push again. If the rebase conflicts, run `git rebase --abort` and report it. Never force.
-6. **Comment with what you did**: what changed, where it lives, how to run it, how you verified it, and the commit hash.
+6. **Post a `done` comment with screenshots.** Say what changed, how to run it, and what you verified in the browser, and give the commit hash. Embed each screenshot from the pushed commit, so the image can't change later:
+
+   ```markdown
+   ![Filtered by tag](https://raw.githubusercontent.com/OWNER/NAME/<commit-sha>/todo/screenshots/issue-4-tag-filter.png)
+   ```
+
+   Raw URLs only render for public repos. For a private repo, link `https://github.com/OWNER/NAME/blob/<sha>/<path>?raw=true` instead.
+
+If a human replies after `done` asking for changes, treat it as a new round. Ask questions only if something is unclear, otherwise go straight to a revised `plan`.
 
 ### 5c. Needs a human
 
-Comment with exactly what's blocking the work (the decision needed, or the destructive step and why you won't take it). Leave the ticket open.
+Post a `blocked` comment saying exactly what's blocking the work (the decision needed, or the destructive step and why you won't take it). Leave the ticket open.
 
 ### Guardrails: no destructive actions
 
@@ -133,7 +188,7 @@ Editing files inside the project the ticket is about is fine, as is deleting fil
 
 ### Posting comments
 
-Write the body to a file in the scratchpad (or a temp dir) and post it with `--body-file`. Inline `--body` strings break on quotes, backticks and newlines:
+Start every body with its stage marker on the first line (e.g. `<!-- factory-loop:plan -->`). It's invisible on GitHub, and stage tracking depends on it. Write the body to a file in the scratchpad (or a temp dir) and post it with `--body-file`. Inline `--body` strings break on quotes, backticks and newlines:
 
 ```bash
 gh issue comment N --repo OWNER/NAME --body-file /path/to/comment.md
@@ -148,7 +203,7 @@ gh issue view N --repo OWNER/NAME --json state,stateReason --jq '"\(.state) \(.s
 gh issue close N --repo OWNER/NAME --reason completed
 ```
 
-Never close a "needs a human" ticket. Without triage/push access, skip the close and say so in the report.
+Close only `answer` and `done` tickets. Never close a ticket that's waiting on questions or plan approval, or a `blocked` one. Without triage/push access, skip the close and say so in the report.
 
 ## 7. Report
 
@@ -157,11 +212,13 @@ Finish with a short summary the user can scan:
 ```
 factory-loop · OWNER/NAME · acting as LOGIN
 #12 Largest city in Pakistan: 👀, answered (comment URL), closed ✓
-#13 Add a weather app: 👀, built weather/ (abc1234), tests 6/6, closed ✓
+#13 Add a weather app: 👀, asked 4 clarifying questions, waiting for answers
+#15 Dark mode for todo: plan posted, waiting for approval
+#16 Export tasks to CSV: approved → built, verified in browser, 3 screenshots, shipped (abc1234), closed ✓
 #14 Delete the old projects: 👀, needs a human (destructive), left open
 ```
 
-On a pass with nothing to do, report it in one line (`factory-loop: no open issues need work in OWNER/NAME`). Under `/loop` that line repeats every tick, so keep it that short.
+On a pass with nothing to do, report it in one line, naming tickets that are waiting (`factory-loop: nothing to do in OWNER/NAME (#13 waiting for answers, #15 waiting for approval)`). Under `/loop` that line repeats every tick, so keep it that short.
 
 If a step failed, include the exact error message and the fix from the step 2 table.
 
