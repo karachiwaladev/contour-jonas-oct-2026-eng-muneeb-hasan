@@ -3,61 +3,168 @@
 <title>Todo tests</title>
 <pre id="out">running</pre>
 <script type="module">
+// Drives index.html in an iframe. Wipes the todo-app database and saved filters first.
 const out = document.querySelector("#out");
 const log = [];
 const check = (name, ok, detail = "") => log.push(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " :: " + detail : ""}`);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function ymd(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function loadFrame() {
+  document.querySelector("iframe")?.remove();
   return new Promise((resolve) => {
     const f = document.createElement("iframe");
     f.src = "index.html";
+    f.style.width = "720px";
+    f.style.height = "600px";
     f.onload = async () => { await wait(300); resolve(f.contentDocument); };
     document.body.append(f);
   });
 }
 
+function seedLegacyTask() {
+  // A task saved by the #3 version of the app, without dueDate or tags.
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open("todo-app", 1);
+    open.onupgradeneeded = () => open.result.createObjectStore("tasks", { keyPath: "id", autoIncrement: true }).createIndex("createdAt", "createdAt");
+    open.onsuccess = () => {
+      const tx = open.result.transaction("tasks", "readwrite");
+      tx.objectStore("tasks").add({ title: "Legacy task", done: false, createdAt: 1 });
+      tx.oncomplete = () => { open.result.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+    open.onerror = () => reject(open.error);
+  });
+}
+
 try {
   await new Promise((r) => { const q = indexedDB.deleteDatabase("todo-app"); q.onsuccess = q.onerror = q.onblocked = r; });
-  let doc = await loadFrame();
-  check("empty state shown", !doc.querySelector("#empty").hidden);
+  localStorage.removeItem("todo-filters");
 
-  const add = async (title) => {
-    doc.querySelector("#new-task-title").value = title;
-    doc.querySelector("#new-task").requestSubmit();
+  // --- #3 basics ---
+  let doc = await loadFrame();
+  const $ = (s) => doc.querySelector(s);
+  const $$ = (s) => [...doc.querySelectorAll(s)];
+  check("empty state shown", !$("#empty").hidden);
+
+  const add = async (title, due = "", tags = "") => {
+    $("#new-task-title").value = title;
+    $("#new-task-due").value = due;
+    $("#new-task-tags").value = tags;
+    $("#new-task").requestSubmit();
     await wait(200);
   };
   await add("   ");
   await add("Buy milk");
   await add("  Write <b>report</b>  ");
-  let items = [...doc.querySelectorAll(".task")];
+  let items = $$(".task");
   check("two tasks added, blank ignored", items.length === 2, String(items.length));
-  check("titles trimmed and not parsed as HTML", items[1].querySelector("span").textContent === "Write <b>report</b>" && !items[1].querySelector("b"));
-  check("input cleared after add", doc.querySelector("#new-task-title").value === "");
-  check("empty state hidden", doc.querySelector("#empty").hidden);
-  check("count", doc.querySelector("#count").textContent === "2 of 2 left", doc.querySelector("#count").textContent);
+  check("titles trimmed and not parsed as HTML", items[1].querySelector(".title").textContent === "Write <b>report</b>" && !items[1].querySelector("b"));
+  check("form cleared after add", $("#new-task-title").value === "" && $("#new-task-tags").value === "" && $("#new-task-due").value === "");
+  check("count", $("#count").textContent === "2 of 2 left", $("#count").textContent);
 
   items[0].querySelector("input[type=checkbox]").click();
   await wait(200);
-  items = [...doc.querySelectorAll(".task")];
-  check("mark done", items[0].classList.contains("done") && items[0].querySelector("input").checked);
-  check("count after done", doc.querySelector("#count").textContent === "1 of 2 left", doc.querySelector("#count").textContent);
-
-  items[1].querySelector(".delete").click();
+  check("mark done", $$(".task")[0].classList.contains("done"));
+  $$(".task")[1].querySelector(".delete").click();
   await wait(200);
-  items = [...doc.querySelectorAll(".task")];
-  check("delete", items.length === 1 && items[0].querySelector("span").textContent === "Buy milk");
+  check("delete", $$(".task").length === 1);
 
-  document.querySelector("iframe").remove();
+  // --- #4 due dates and tags ---
+  await add("File taxes", ymd(-2), "Finance, URGENT, finance");
+  await add("Plan trip", ymd(5), "travel");
+  await add("Call mom", ymd(0), "");
+  items = $$(".task");
+  const taxes = items.find((li) => li.querySelector(".title").textContent === "File taxes");
+  const tags = [...taxes.querySelectorAll(".tag")].map((t) => t.textContent);
+  check("tags trimmed, lowercased, de-duplicated", JSON.stringify(tags) === '["finance","urgent"]', JSON.stringify(tags));
+  check("past due incomplete task is overdue", taxes.classList.contains("overdue") && taxes.querySelector(".due.overdue"));
+  const callMom = items.find((li) => li.querySelector(".title").textContent === "Call mom");
+  check("due today is not overdue", !callMom.classList.contains("overdue") && callMom.querySelector(".due"));
+  check("no-due task shows no badge", !items.find((li) => li.querySelector(".title").textContent === "Buy milk").querySelector(".due"));
+  check("tag filter lists tags in use", JSON.stringify([...$("#tag-filter").querySelectorAll(".tag")].map((t) => t.textContent)) === '["finance","travel","urgent"]');
+
+  // --- status filters ---
+  const statusBtn = (s) => $(`#status-filter [data-status="${s}"]`);
+  const titles = () => $$(".task .title").map((t) => t.textContent);
+  check("status counts", statusBtn("all").textContent.includes("4") && statusBtn("incomplete").textContent.includes("3") && statusBtn("completed").textContent.includes("1"),
+    ["all", "incomplete", "completed"].map((s) => statusBtn(s).textContent.trim()).join(" | "));
+  statusBtn("completed").click(); await wait(200);
+  check("completed filter", JSON.stringify(titles()) === '["Buy milk"]', JSON.stringify(titles()));
+  statusBtn("incomplete").click(); await wait(200);
+  check("incomplete filter", titles().length === 3 && !titles().includes("Buy milk"), JSON.stringify(titles()));
+
+  // --- tag filter combined with status ---
+  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "travel").click(); await wait(200);
+  check("tag + status filter", JSON.stringify(titles()) === '["Plan trip"]', JSON.stringify(titles()));
+  statusBtn("completed").click(); await wait(200);
+  check("no-match message", $$(".task").length === 0 && !$("#empty").hidden && $("#empty").textContent === "No tasks match these filters.");
+  statusBtn("incomplete").click(); await wait(200);
+
+  // --- filters persist across reload ---
   doc = await loadFrame();
-  items = [...doc.querySelectorAll(".task")];
-  check("persists across reload", items.length === 1 && items[0].classList.contains("done"));
+  check("filters persist after reload", statusBtn("incomplete").getAttribute("aria-pressed") === "true" &&
+    [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "travel").getAttribute("aria-pressed") === "true" &&
+    JSON.stringify(titles()) === '["Plan trip"]', JSON.stringify(titles()));
+  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "travel").click(); await wait(200);
+  check("clicking active tag clears it", titles().length === 3, JSON.stringify(titles()));
+  statusBtn("all").click(); await wait(200);
 
-  items[0].querySelector("input[type=checkbox]").click();
-  await wait(200);
-  check("unmark done", !doc.querySelector(".task").classList.contains("done"));
+  // --- clicking a tag on a task applies it ---
+  $$(".task").find((li) => li.querySelector(".title").textContent === "File taxes").querySelector(".tag").click(); await wait(200);
+  check("task tag chip filters", JSON.stringify(titles()) === '["File taxes"]', JSON.stringify(titles()));
+  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.getAttribute("aria-pressed") === "true").click(); await wait(200);
+
+  // --- editing ---
+  const row = (title) => $$(".task").find((li) => li.querySelector(".title")?.textContent === title);
+  row("Plan trip").querySelector(".edit").click(); await wait(200);
+  let editor = $(".task.editing form");
+  check("edit mode opens with current values", editor && editor.querySelector(".edit-title").value === "Plan trip" && editor.querySelector(".edit-tags").value === "travel" && editor.querySelector(".edit-due").value === ymd(5));
+  editor.querySelector(".edit-title").value = "Plan summer trip";
+  editor.querySelector(".edit-due").value = ymd(-1);
+  editor.querySelector(".edit-tags").value = "Travel, family";
+  editor.requestSubmit(); await wait(200);
+  const edited = row("Plan summer trip");
+  check("edit saves title, due date and tags", edited && edited.classList.contains("overdue") &&
+    JSON.stringify([...edited.querySelectorAll(".tag")].map((t) => t.textContent)) === '["travel","family"]');
+
+  row("Call mom").querySelector(".edit").click(); await wait(200);
+  editor = $(".task.editing form");
+  editor.querySelector(".edit-title").value = "   ";
+  editor.requestSubmit(); await wait(200);
+  check("blank title rejected in edit", $(".task.editing") && !row("   "));
+  editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await wait(200);
+  check("escape cancels edit", !$(".task.editing") && row("Call mom"));
+
+  row("Call mom").querySelector(".edit").click(); await wait(200);
+  $(".task.editing form .edit-tags").value = "family";
+  $(".task.editing form button.secondary").click(); await wait(200);
+  check("cancel discards changes", row("Call mom").querySelectorAll(".tag").length === 0);
+
+  // --- completing an overdue task clears the overdue highlight ---
+  row("File taxes").querySelector("input[type=checkbox]").click(); await wait(200);
+  check("done task is not overdue", !row("File taxes").classList.contains("overdue"));
+
+  // --- a deleted tag disappears from the filter, and a saved filter on it resets ---
+  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "family").click(); await wait(200);
+  row("Plan summer trip").querySelector(".delete").click(); await wait(200);
+  check("stale tag filter resets", ![...$("#tag-filter").querySelectorAll(".tag")].some((t) => t.textContent === "family") && titles().length === 3, JSON.stringify(titles()));
+
+  // --- legacy tasks from #3 still load ---
+  document.querySelector("iframe").remove();
+  await wait(100);
+  await new Promise((r) => { const q = indexedDB.deleteDatabase("todo-app"); q.onsuccess = q.onerror = q.onblocked = r; });
+  await seedLegacyTask();
+  localStorage.removeItem("todo-filters");
+  doc = await loadFrame();
+  check("legacy task without due date or tags renders", titles()[0] === "Legacy task" && !$(".task .due") && !$(".task .tag"));
 } catch (e) {
-  check("no exceptions", false, e && e.stack || String(e));
+  check("no exceptions", false, (e && e.stack) || String(e));
 }
 out.textContent = "DONE\n" + log.join("\n");
 </script>

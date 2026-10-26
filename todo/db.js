@@ -30,12 +30,18 @@ async function run(mode, fn) {
   });
 }
 
-export function getAllTasks() {
-  return run("readonly", (store) => store.index("createdAt").getAll());
+// Tasks saved before due dates and tags existed lack those fields.
+function normalize(task) {
+  return { ...task, dueDate: task.dueDate || null, tags: Array.isArray(task.tags) ? task.tags : [] };
 }
 
-export function addTask(title) {
-  return run("readwrite", (store) => store.add({ title, done: false, createdAt: Date.now() }));
+export async function getAllTasks() {
+  const tasks = await run("readonly", (store) => store.index("createdAt").getAll());
+  return tasks.map(normalize);
+}
+
+export function addTask({ title, dueDate = null, tags = [] }) {
+  return run("readwrite", (store) => store.add({ title, done: false, dueDate, tags, createdAt: Date.now() }));
 }
 
 export function updateTask(task) {
