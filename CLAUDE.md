@@ -46,6 +46,8 @@ Keep context small and load detail only when it's needed:
 |---|---|
 | `CLAUDE.md` | This index and the factory rules |
 | `.claude/skills/factory-loop/` | Skill that triages, answers and closes ticket issues |
+| `.claude/settings.json` | Project hooks: a Stop hook runs `.claude/hooks/log-prompts.py` |
+| `.claude/prompts.jsonl` | Log of typed prompts (one JSON object per line), appended on every stop |
 | `README.md` | Workshop instructions and scoring (not factory docs) |
 
 ### Projects
