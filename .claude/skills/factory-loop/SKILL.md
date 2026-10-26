@@ -1,11 +1,11 @@
 ---
 name: factory-loop
-description: Work through a GitHub repo's open issues end to end, both answering questions and doing the work tickets ask for. Acknowledge each issue with a 👀 reaction. Questions get answered in a comment. Tasks (build a project, add a feature, create files) go through clarifying questions and a plan posted on the ticket, wait for approval, then get built, verified in a real browser with chrome-devtools, committed and pushed with "Closes #N", and reported back with screenshots. Never takes destructive actions: deletions, rewrites of history, force pushes and anything irreversible are flagged for a human instead. Before any write it checks which gh account is active and what permission it has, so Enterprise Managed User (EMU) 403s and read-only access get diagnosed instead of retried. Re-running it is safe, so it fits /loop (e.g. `/loop 5m /factory-loop`). Use this whenever the user asks to fetch, triage, answer, work on, build, respond to or close GitHub issues or tickets, "work the issue queue", "run the factory", or keep watching a repo for new tickets, even if they don't say "factory-loop".
+description: Work through a GitHub repo's open issues end to end, both answering questions and doing the work tickets ask for. Acknowledge each issue with a 👀 reaction. Questions get answered in a comment. Tasks (build a project, add a feature, create files) go through clarifying questions and a plan posted on the ticket, wait for approval, then get built on a branch, verified in a real browser with chrome-devtools, and opened as a pull request with screenshots. The PR is merged only after a second approval. Never takes destructive actions: deletions, rewrites of history, force pushes and anything irreversible are flagged for a human instead. Before any write it checks which gh account is active and what permission it has, so Enterprise Managed User (EMU) 403s and read-only access get diagnosed instead of retried. Re-running it is safe, so it fits /loop (e.g. `/loop 5m /factory-loop`). Use this whenever the user asks to fetch, triage, answer, work on, build, respond to or close GitHub issues or tickets, "work the issue queue", "run the factory", or keep watching a repo for new tickets, even if they don't say "factory-loop".
 ---
 
 # factory-loop
 
-Turn a repo's open issues into finished, closed tickets. Questions go **fetch → acknowledge → answer → close**. Tasks go **fetch → acknowledge → ask → plan → (approval) → build → verify in browser → ship with screenshots → close**, one stage per pass, waiting on the ticket between stages. Each pass leaves the queue a little emptier. A pass that finds nothing to do should be quiet and cheap, so the skill can run repeatedly under `/loop`.
+Turn a repo's open issues into finished, closed tickets. Questions go **fetch → acknowledge → answer → close**. Tasks go **fetch → acknowledge → ask → plan → (approval) → build on a branch → verify in browser → open PR with screenshots → (approval) → merge → close**, one stage per pass, waiting on the ticket between stages. Each pass leaves the queue a little emptier. A pass that finds nothing to do should be quiet and cheap, so the skill can run repeatedly under `/loop`.
 
 Run the commands with the Bash tool. All examples use the `gh` CLI. If the repo has a `CLAUDE.md`, read it first. It holds the project conventions and the index you'll update.
 
@@ -73,7 +73,8 @@ Every comment the loop posts starts with a hidden marker that records the ticket
 | `<!-- factory-loop:answer -->` | A question was answered |
 | `<!-- factory-loop:questions -->` | Clarifying questions were asked about a task |
 | `<!-- factory-loop:plan -->` | A plan was posted for approval |
-| `<!-- factory-loop:done -->` | The task was built, verified and shipped |
+| `<!-- factory-loop:review -->` | The task was built and verified, and a PR is waiting for merge approval |
+| `<!-- factory-loop:done -->` | The PR was merged and the task shipped |
 | `<!-- factory-loop:blocked -->` | The ticket needs a human (see 5c) |
 
 The markers matter because the loop and the user may comment from **the same GitHub account**. A comment without a marker is a human's comment, even if it comes from the acting login.
@@ -82,7 +83,7 @@ An issue **needs work** if it's open and either:
 - it has no marker comment yet (a new ticket), or
 - a human comment (no marker) arrived after the latest marker comment.
 
-Otherwise skip it. It's either finished or **waiting**: on answers to questions, or on plan approval. A waiting ticket costs nothing per tick, and it wakes up when someone replies. If a `done` or `answer` ticket is still open (a previous pass lacked permission to close), it only needs the close step. Comments from before markers existed count as `answer`/`done` if they are the loop's.
+Otherwise skip it. It's either finished or **waiting**: on answers to questions, on plan approval, or on PR merge approval. A waiting ticket costs nothing per tick, and it wakes up when someone replies. If a `done` or `answer` ticket is still open (a previous pass lacked permission to close), it only needs the close step. Comments from before markers existed count as `answer`/`done` if they are the loop's.
 
 Work through tickets **oldest first**. Later tickets often build on earlier ones (e.g. "add filters to the todo app" after "build a todo app").
 
@@ -112,9 +113,9 @@ Post it as an `answer` comment.
 - Use real figures and name their source and date (e.g. "2023 census"). If the fact could have changed since your training, check it with WebSearch first.
 - If the question is ambiguous, answer the likeliest reading and add one line on the other. For a follow-up, answer only the new question and refer back to your earlier comment.
 
-### 5b. Do a task: questions → plan → approval → build → verify → ship
+### 5b. Do a task: questions → plan → approval → build on a branch → verify → PR → approval → merge
 
-Building happens only after the ticket has been clarified and a plan approved **on the ticket**. Each stage ends with a marker comment, and the loop picks the ticket up again when a human replies. Work out the stage from the latest marker comment:
+Building happens only after the ticket has been clarified and a plan approved **on the ticket**. Work lands on the default branch only after a second approval of the finished pull request. Each stage ends with a marker comment, and the loop picks the ticket up again when a human replies. Work out the stage from the latest marker comment:
 
 **Stage 1: no marker yet → ask clarifying questions.** Read `CLAUDE.md` and, if the ticket extends an existing project, that project's folder. Then post a `questions` comment listing the assumptions you'd otherwise have to make, as numbered questions. Offer a recommended default for each, so the reply can be as short as "defaults are fine". Cover:
 - scope and behaviour
@@ -138,37 +139,75 @@ End it with: *"Reply **approve** to start the build, or reply with changes."*
 - the reply comes from the **ticket author or the acting account**;
 - it clearly says yes ("approve", "approved", "lgtm", "go ahead", "yes", "ship it", 👍).
 
-Anything else is feedback: revise the plan and post a new `plan` comment. Replies from other people are input, never approval. Approval for one plan doesn't carry over to a revised plan.
+The same rule applies to the merge approval in stage 5. Anything else is feedback: revise the plan and post a new `plan` comment. Replies from other people are input, never approval. Approval for one plan doesn't carry over to a revised plan.
 
-**Stage 4: approved → build, verify, ship.**
-1. **Build exactly the approved plan.** If you discover the plan can't work as written, don't improvise a different design. Post a revised `plan` and wait. Follow `CLAUDE.md` conventions: new projects go in their own top-level folder with a `README.md`, and changes to an existing project stay inside its folder. Prefer no-build, dependency-free code so it runs from a fresh clone.
-2. **Run any existing tests.** They must still pass, and you should add tests for the new behaviour.
-3. **Verify in a real browser with the chrome-devtools MCP tools.** Serve the project (e.g. `python -m http.server <port>` in the background), then:
+**Stage 4: plan approved → build on a branch, verify, open a PR.**
+1. **Start a branch from an up-to-date default branch.** Never build on the default branch itself:
+
+   ```bash
+   git switch main && git pull --ff-only
+   git switch -c factory/issue-4-filters-due-dates-tags     # factory/issue-N-<short-slug>
+   ```
+
+   If the branch already exists (a revised plan or requested changes), switch to it and keep working there. Don't recreate or reset it.
+2. **Build exactly the approved plan.** If you discover the plan can't work as written, don't improvise a different design. Post a revised `plan` and wait. Follow `CLAUDE.md` conventions: new projects go in their own top-level folder with a `README.md`, and changes to an existing project stay inside its folder. Prefer no-build, dependency-free code so it runs from a fresh clone.
+3. **Run any existing tests.** They must still pass, and you should add tests for the new behaviour.
+4. **Verify in a real browser with the chrome-devtools MCP tools.** Serve the project (e.g. `python -m http.server <port>` in the background), then:
    - open the page with `new_page`;
    - exercise every feature in the plan with `fill`, `click`, `press_key` and `evaluate_script`, checking the results;
    - confirm `list_console_messages` shows no errors;
    - capture screenshots with `take_screenshot` (`filePath`) into `<project>/screenshots/issue-N-<what>.png`, one per key state named in the plan.
 
-   Stop the server afterwards. If the plugin's `chrome-devtools` server fails with *"The browser is already running"*, use the project's `chrome-devtools-isolated` server from `.mcp.json`, which runs with `--isolated`. Don't report "done" on anything you haven't seen working in the browser.
-4. **Update the index.** If you added a project folder, add its row to the `CLAUDE.md` index in the same commit, and keep `CLAUDE.md` within any size rule it states.
-5. **Commit and push to the default branch.** Stage only this ticket's files and screenshots (`git add <paths>`, not `git add -A`), and reference the ticket:
+   Stop the server afterwards. If the plugin's `chrome-devtools` server fails with *"The browser is already running"*, use the project's `chrome-devtools-isolated` server from `.mcp.json`, which runs with `--isolated`. Don't open a PR for anything you haven't seen working in the browser.
+5. **Update the index.** If you added a project folder, add its row to the `CLAUDE.md` index in the same commit, and keep `CLAUDE.md` within any size rule it states.
+6. **Commit and push the branch.** Stage only this ticket's files and screenshots (`git add <paths>`, not `git add -A`):
 
    ```bash
    git add todo/ CLAUDE.md
-   git commit -m "Add filters, due dates and tags to todo app (#4)" -m "Closes #4"
-   git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin HEAD
+   git commit -m "Add filters, due dates and tags to todo app (#4)"
+   git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push -u origin HEAD
    ```
 
-   If the push is rejected because the remote moved, run `git pull --rebase` and push again. If the rebase conflicts, run `git rebase --abort` and report it. Never force.
-6. **Post a `done` comment with screenshots.** Say what changed, how to run it, and what you verified in the browser, and give the commit hash. Embed each screenshot from the pushed commit, so the image can't change later:
+7. **Open a pull request into the default branch.** Put `Closes #N` in the body so merging closes the ticket. The body covers what changed, how to run it, what you verified in the browser, and the screenshots (see the embed format below):
 
-   ```markdown
-   ![Filtered by tag](https://raw.githubusercontent.com/OWNER/NAME/<commit-sha>/todo/screenshots/issue-4-tag-filter.png)
+   ```bash
+   gh pr create --repo OWNER/NAME --base main --head factory/issue-4-filters-due-dates-tags \
+     --title "Add filters, due dates and tags to todo app (#4)" --body-file /path/to/pr-body.md
    ```
 
-   Raw URLs only render for public repos. For a private repo, link `https://github.com/OWNER/NAME/blob/<sha>/<path>?raw=true` instead.
+   If a PR for the branch already exists, push the new commits to it and comment on the PR with what changed. Don't open a second PR.
+8. **Post a `review` comment on the ticket.** Link the PR, embed the screenshots, and summarize what was verified. End it with: *"Reply **approve** (here or on the PR) to merge, or reply with changes."* Then stop and wait. **Never merge without this second approval.**
 
-If a human replies after `done` asking for changes, treat it as a new round. Ask questions only if something is unclear, otherwise go straight to a revised `plan`.
+Embed screenshots from the branch's pushed commit, so the image can't change later:
+
+```markdown
+![Filtered by tag](https://raw.githubusercontent.com/OWNER/NAME/<commit-sha>/todo/screenshots/issue-4-tag-filter.png)
+```
+
+Raw URLs only render for public repos. For a private repo, link `https://github.com/OWNER/NAME/blob/<sha>/<path>?raw=true` instead.
+
+**Stage 5: `review` + a human reply → merge or revise.** Look for the reply on the ticket **and** in the PR's conversation:
+
+```bash
+gh pr view <pr> --repo OWNER/NAME --json state,mergeable,comments,reviews
+```
+
+It counts as approval under the same rule as stage 3: from the ticket author or the acting account, clearly saying yes. A GitHub "Approve" review from the ticket author also counts.
+
+- **Approved:**
+  1. Merge with a merge commit. Don't squash or rebase, so the branch's history is kept as it was reviewed:
+
+     ```bash
+     gh pr merge <pr> --repo OWNER/NAME --merge
+     git switch main && git pull --ff-only
+     ```
+
+     Leave the branch in place. Deleting branches is on the never list.
+  2. If the PR isn't mergeable (conflicts, failing required checks), don't force it. Merge the default branch into the feature branch, resolve the conflicts, re-verify in the browser, push, and post a fresh `review` comment. A fresh `review` comment needs a fresh approval.
+  3. Post a `done` comment with the merge commit and PR link.
+- **Changes requested:** stay on the same branch, make the changes, re-verify, push to the same PR, and post a new `review` comment. If the changes alter the agreed design, post a revised `plan` first instead.
+
+If a human replies after `done` asking for changes, treat it as a new round on a new branch. Ask questions only if something is unclear, otherwise go straight to a revised `plan`.
 
 ### 5c. Needs a human
 
@@ -196,14 +235,14 @@ gh issue comment N --repo OWNER/NAME --body-file /path/to/comment.md
 
 ## 6. Close as completed
 
-Close answered questions and finished tasks. A pushed commit containing `Closes #N` on the default branch closes the issue automatically. Confirm it, and close it yourself if it's still open:
+Close answered questions and merged tasks. Merging a PR whose body contains `Closes #N` closes the issue automatically. Confirm it, and close it yourself if it's still open:
 
 ```bash
 gh issue view N --repo OWNER/NAME --json state,stateReason --jq '"\(.state) \(.stateReason)"'
 gh issue close N --repo OWNER/NAME --reason completed
 ```
 
-Close only `answer` and `done` tickets. Never close a ticket that's waiting on questions or plan approval, or a `blocked` one. Without triage/push access, skip the close and say so in the report.
+Close only `answer` and `done` tickets. Never close a ticket that's waiting on questions, plan approval or merge approval (`review`), or a `blocked` one. Without triage/push access, skip the close and say so in the report.
 
 ## 7. Report
 
@@ -214,11 +253,12 @@ factory-loop · OWNER/NAME · acting as LOGIN
 #12 Largest city in Pakistan: 👀, answered (comment URL), closed ✓
 #13 Add a weather app: 👀, asked 4 clarifying questions, waiting for answers
 #15 Dark mode for todo: plan posted, waiting for approval
-#16 Export tasks to CSV: approved → built, verified in browser, 3 screenshots, shipped (abc1234), closed ✓
+#16 Export tasks to CSV: approved → built on factory/issue-16-csv-export, verified in browser, PR #17 opened with 3 screenshots, waiting for merge approval
+#18 Sort by due date: merge approved → PR #19 merged (abc1234), closed ✓
 #14 Delete the old projects: 👀, needs a human (destructive), left open
 ```
 
-On a pass with nothing to do, report it in one line, naming tickets that are waiting (`factory-loop: nothing to do in OWNER/NAME (#13 waiting for answers, #15 waiting for approval)`). Under `/loop` that line repeats every tick, so keep it that short.
+On a pass with nothing to do, report it in one line, naming tickets that are waiting (`factory-loop: nothing to do in OWNER/NAME (#13 waiting for answers, #15 waiting for plan approval, #16 waiting for merge approval on PR #17)`). Under `/loop` that line repeats every tick, so keep it that short.
 
 If a step failed, include the exact error message and the fix from the step 2 table.
 

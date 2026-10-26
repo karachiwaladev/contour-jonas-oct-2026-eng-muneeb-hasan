@@ -10,9 +10,9 @@ skills and conventions) rather than hand-building features.
 2. The `factory-loop` skill (run with `/loop 1m /factory-loop`) reacts 👀 to acknowledge it.
 3. Questions are answered in a comment and the issue is closed as completed.
 4. Build tasks: the loop posts clarifying questions, then a plan, and builds only after the
-   ticket author (or we) reply "approve". Work goes in the project's own folder (see
-   [Projects](#projects)), is verified in Chrome via chrome-devtools, and ships to `main` with
-   `Closes #N` and a "done" comment with screenshots.
+   ticket author (or we) reply "approve". Work happens on a `factory/issue-N-*` branch in the
+   project's own folder (see [Projects](#projects)), is verified in Chrome via chrome-devtools,
+   and goes out as a PR (`Closes #N`) with screenshots. It merges only after a second "approve".
 5. Only what's on GitHub counts. A Stop hook commits and pushes anything left over after every turn.
 6. **No destructive actions:** no force pushes, history rewrites or deleting content the ticket
    doesn't own. Tickets that need one are left open for a human.
@@ -50,7 +50,7 @@ Keep context small and load detail only when it's needed:
 | Path | What it is |
 |---|---|
 | `CLAUDE.md` | This index and the factory rules |
-| `.claude/skills/factory-loop/` | Skill that answers tickets, or asks, plans, builds and ships them |
+| `.claude/skills/factory-loop/` | Skill that answers tickets, or asks, plans, builds, PRs and merges them |
 | `.claude/settings.json` | Stop hook: logs prompts, then `.claude/hooks/auto-commit.sh` commits and pushes |
 | `.mcp.json` | `chrome-devtools-isolated` MCP server (own browser profile) for in-browser checks |
 | `.claude/prompts.jsonl` | Log of typed prompts (one JSON object per line), appended on every stop |
