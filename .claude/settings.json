@@ -5,8 +5,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-prompts.py\" 2>/dev/null || true",
-            "timeout": 30
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/log-prompts.py\" 2>/dev/null; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/auto-commit.sh\" 2>/dev/null || true",
+            "timeout": 120,
+            "statusMessage": "Logging prompts and pushing changes"
           }
         ]
       }

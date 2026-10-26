@@ -9,9 +9,11 @@ skills and conventions) rather than hand-building features.
 1. A ticket is opened as an issue on this repo.
 2. The `factory-loop` skill (run with `/loop 1m /factory-loop`) reacts 👀 to acknowledge it.
 3. Questions are answered in a comment and the issue is closed as completed.
-4. Build tasks go into the project's own folder (see [Projects](#projects)), get committed to
-   `main`, and the issue is closed with a link to the commit.
-5. Only what's on GitHub counts: push to `main`.
+4. Build tasks go into the project's own folder (see [Projects](#projects)), are tested, get
+   committed to `main` with `Closes #N`, and get a "done" comment on the ticket.
+5. Only what's on GitHub counts. A Stop hook commits and pushes anything left over after every turn.
+6. **No destructive actions:** no force pushes, history rewrites or deleting content the ticket
+   doesn't own. Tickets that need one are left open for a human.
 
 ## Progressive disclosure
 
@@ -45,8 +47,8 @@ Keep context small and load detail only when it's needed:
 | Path | What it is |
 |---|---|
 | `CLAUDE.md` | This index and the factory rules |
-| `.claude/skills/factory-loop/` | Skill that triages, answers and closes ticket issues |
-| `.claude/settings.json` | Project hooks: a Stop hook runs `.claude/hooks/log-prompts.py` |
+| `.claude/skills/factory-loop/` | Skill that answers or builds each ticket, then ships and closes it |
+| `.claude/settings.json` | Stop hook: logs prompts, then `.claude/hooks/auto-commit.sh` commits and pushes |
 | `.claude/prompts.jsonl` | Log of typed prompts (one JSON object per line), appended on every stop |
 | `README.md` | Workshop instructions and scoring (not factory docs) |
 
