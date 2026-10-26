@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stop hook: commit any changes in the project and push them to its remote.
 # Non-destructive by design: never forces, never rewrites pushed history, skips
-# while a merge/rebase is in progress, and refuses to commit likely secrets.
+# while a merge/rebase is in progress, and refuses to commit likely secrets
+# (see secret-scan.sh).
 
 say() { printf '{"systemMessage": "auto-commit: %s"}\n' "$1"; }
 git_push() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"; }
@@ -17,8 +18,9 @@ branch=$(git symbolic-ref --short -q HEAD) || { say "skipped, HEAD is detached";
 
 if [ -n "$(git status --porcelain)" ]; then
   git add -A 2>/dev/null
-  # Keep likely secrets out of history: unstage them and warn instead.
-  secrets=$(git diff --cached --name-only | grep -iE '(^|/)(\.env(\..*)?|id_rsa[^/]*|id_ed25519[^/]*|[^/]*\.(pem|key|p12|pfx)|credentials[^/]*)$')
+  # Keep likely secrets out of history (by file name or by token/key content):
+  # unstage those files and warn instead.
+  secrets=$(bash "$(dirname "$0")/secret-scan.sh")
   if [ -n "$secrets" ]; then
     echo "$secrets" | while IFS= read -r f; do git reset -q -- "$f"; done
     held=$(echo "$secrets" | tr '\n' ' ')
