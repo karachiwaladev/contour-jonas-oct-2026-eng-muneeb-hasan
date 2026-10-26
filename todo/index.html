@@ -12,6 +12,13 @@
     <form id="new-task">
       <input id="new-task-title" type="text" placeholder="What needs doing?" aria-label="New task" autocomplete="off" required>
       <input id="new-task-due" type="date" aria-label="Due date (optional)">
+      <select id="new-task-repeat" aria-label="Repeat">
+        <option value="none">Doesn't repeat</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+        <option value="yearly">Yearly</option>
+      </select>
       <input id="new-task-tags" type="text" placeholder="Tags, e.g. work, urgent" aria-label="Tags (optional, comma-separated)" autocomplete="off">
       <button type="submit">Add</button>
     </form>

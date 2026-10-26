@@ -1,4 +1,5 @@
-import { addTask, deleteTask, getAllTasks, updateTask } from "./db.js";
+import { addTask, completeAndSpawn, deleteTask, getAllTasks, updateTask } from "./db.js";
+import { REPEATS, REPEAT_LABELS, dayOf, nextDueDate } from "./recurrence.js";
 
 const FILTERS_KEY = "todo-filters";
 const STATUSES = ["all", "incomplete", "completed"];
@@ -7,6 +8,7 @@ const form = document.querySelector("#new-task");
 const titleInput = document.querySelector("#new-task-title");
 const dueInput = document.querySelector("#new-task-due");
 const tagsInput = document.querySelector("#new-task-tags");
+const repeatInput = document.querySelector("#new-task-repeat");
 const statusFilter = document.querySelector("#status-filter");
 const tagFilter = document.querySelector("#tag-filter");
 const list = document.querySelector("#tasks");
@@ -68,6 +70,31 @@ function el(tag, props = {}, children = []) {
   return node;
 }
 
+// Fields for a task's schedule. A repeating task needs a date to repeat from, so it
+// defaults to today. repeatDay remembers the day of month the series is anchored to.
+function schedule(dueDate, repeat, previous = null) {
+  const date = dueDate || (repeat !== "none" ? today() : null);
+  const keepAnchor = previous && previous.dueDate === date && previous.repeatDay;
+  return { dueDate: date, repeat, repeatDay: date ? (keepAnchor ? previous.repeatDay : dayOf(date)) : null };
+}
+
+async function setDone(task, done) {
+  if (done && task.repeat !== "none" && !task.spawned) {
+    const anchor = task.repeatDay || dayOf(task.dueDate);
+    const dueDate = nextDueDate(task.dueDate, task.repeat, today(), anchor);
+    await completeAndSpawn(task, { title: task.title, tags: task.tags, repeat: task.repeat, repeatDay: anchor, dueDate });
+  } else {
+    await updateTask({ ...task, done });
+  }
+  await render();
+}
+
+function repeatSelect(value, props) {
+  const select = el("select", props, REPEATS.map((r) => el("option", { value: r, textContent: REPEAT_LABELS[r] })));
+  select.value = value;
+  return select;
+}
+
 function tagChip(tag, onClick) {
   const chip = el("button", { type: "button", className: "tag", textContent: tag });
   chip.addEventListener("click", onClick);
@@ -82,16 +109,16 @@ function renderTask(task) {
 
   const checkbox = el("input", { type: "checkbox", checked: task.done });
   checkbox.setAttribute("aria-label", `Mark "${task.title}" done`);
-  checkbox.addEventListener("change", async () => {
-    await updateTask({ ...task, done: checkbox.checked });
-    await render();
-  });
+  checkbox.addEventListener("change", () => setDone(task, checkbox.checked));
 
   const meta = el("div", { className: "meta" });
   if (task.dueDate) {
     const due = el("span", { className: overdue ? "due overdue" : "due" });
     due.textContent = overdue ? `Overdue · ${formatDue(task.dueDate)}` : `Due ${formatDue(task.dueDate)}`;
     meta.append(due);
+  }
+  if (task.repeat !== "none") {
+    meta.append(el("span", { className: "repeat", textContent: `↻ ${REPEAT_LABELS[task.repeat]}`, title: "Repeats" }));
   }
   for (const tag of task.tags) meta.append(tagChip(tag, () => setFilters({ tag })));
 
@@ -123,6 +150,8 @@ function renderEditor(task) {
   due.setAttribute("aria-label", "Due date");
   const tags = el("input", { type: "text", value: task.tags.join(", "), placeholder: "Tags, comma-separated", name: "tags", className: "edit-tags" });
   tags.setAttribute("aria-label", "Tags");
+  const repeat = repeatSelect(task.repeat, { name: "repeat", className: "edit-repeat" });
+  repeat.setAttribute("aria-label", "Repeat");
 
   const save = el("button", { type: "submit", textContent: "Save" });
   const cancel = el("button", { type: "button", className: "secondary", textContent: "Cancel" });
@@ -132,7 +161,7 @@ function renderEditor(task) {
   };
   cancel.addEventListener("click", stopEditing);
 
-  const editor = el("form", { className: "editor" }, [title, due, tags, el("div", { className: "actions" }, [save, cancel])]);
+  const editor = el("form", { className: "editor" }, [title, due, repeat, tags, el("div", { className: "actions" }, [save, cancel])]);
   editor.addEventListener("keydown", (event) => {
     if (event.key === "Escape") stopEditing();
   });
@@ -144,7 +173,7 @@ function renderEditor(task) {
       title.reportValidity();
       return;
     }
-    await updateTask({ ...task, title: newTitle, dueDate: due.value || null, tags: parseTags(tags.value) });
+    await updateTask({ ...task, title: newTitle, tags: parseTags(tags.value), ...schedule(due.value || null, repeat.value, task) });
     editingId = null;
     await render();
   });
@@ -203,7 +232,7 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = titleInput.value.trim();
   if (!title) return;
-  await addTask({ title, dueDate: dueInput.value || null, tags: parseTags(tagsInput.value) });
+  await addTask({ title, tags: parseTags(tagsInput.value), ...schedule(dueInput.value || null, repeatInput.value) });
   form.reset();
   titleInput.focus();
   await render();

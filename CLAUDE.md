@@ -63,7 +63,7 @@ Keep context small and load detail only when it's needed:
 
 | Folder | Ticket | Description |
 |---|---|---|
-| `todo/` | #3 | Browser todo app: create, complete and delete tasks, stored in IndexedDB |
+| `todo/` | #3–#5 | Browser todo app: tasks with due dates, tags, filters and repeats, in IndexedDB |
 
 ## Ground rules
 

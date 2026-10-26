@@ -3,6 +3,7 @@
 <title>Todo tests</title>
 <pre id="out">running</pre>
 <script type="module">
+import { nextDueDate } from "./recurrence.js";
 // Drives index.html in an iframe. Wipes the todo-app database and saved filters first.
 const out = document.querySelector("#out");
 const log = [];
@@ -43,6 +44,24 @@ function seedLegacyTask() {
 }
 
 try {
+  // --- #5 recurrence date maths (pure functions) ---
+  const nd = (...a) => nextDueDate(...a);
+  const cases = [
+    ["daily: next day", nd("2026-10-26", "daily", "2026-10-26"), "2026-10-27"],
+    ["daily: across month end", nd("2026-10-31", "daily", "2026-10-31"), "2026-11-01"],
+    ["daily: overdue skips ahead to today", nd("2026-10-01", "daily", "2026-10-26"), "2026-10-26"],
+    ["weekly: +7 days", nd("2026-10-26", "weekly", "2026-10-26"), "2026-11-02"],
+    ["weekly: overdue keeps weekday", nd("2026-10-01", "weekly", "2026-10-26"), "2026-10-29"],
+    ["monthly: Dec -> Jan", nd("2026-12-15", "monthly", "2026-12-15"), "2027-01-15"],
+    ["monthly: 31 Jan -> 28 Feb", nd("2026-01-31", "monthly", "2026-01-31"), "2026-02-28"],
+    ["monthly: back to 31 Mar via anchor", nd("2026-02-28", "monthly", "2026-02-28", 31), "2026-03-31"],
+    ["monthly: 31 Jan -> 29 Feb in a leap year", nd("2028-01-31", "monthly", "2028-01-31"), "2028-02-29"],
+    ["yearly: 29 Feb -> 28 Feb", nd("2028-02-29", "yearly", "2028-02-29"), "2029-02-28"],
+    ["yearly: back to 29 Feb in a leap year", nd("2031-02-28", "yearly", "2031-02-28", 29), "2032-02-29"],
+    ["early completion keeps the schedule", nd("2026-11-10", "weekly", "2026-10-26"), "2026-11-17"],
+  ];
+  for (const [name, got, want] of cases) check(name, got === want, got);
+
   await new Promise((r) => { const q = indexedDB.deleteDatabase("todo-app"); q.onsuccess = q.onerror = q.onblocked = r; });
   localStorage.removeItem("todo-filters");
 
@@ -52,10 +71,11 @@ try {
   const $$ = (s) => [...doc.querySelectorAll(s)];
   check("empty state shown", !$("#empty").hidden);
 
-  const add = async (title, due = "", tags = "") => {
+  const add = async (title, due = "", tags = "", repeat = "none") => {
     $("#new-task-title").value = title;
     $("#new-task-due").value = due;
     $("#new-task-tags").value = tags;
+    $("#new-task-repeat").value = repeat;
     $("#new-task").requestSubmit();
     await wait(200);
   };
@@ -155,6 +175,41 @@ try {
   row("Plan summer trip").querySelector(".delete").click(); await wait(200);
   check("stale tag filter resets", ![...$("#tag-filter").querySelectorAll(".tag")].some((t) => t.textContent === "family") && titles().length === 3, JSON.stringify(titles()));
 
+  // --- #5 recurring tasks in the UI ---
+  const label = (d) => { const [y, m, dd] = d.split("-").map(Number); return new Date(y, m - 1, dd).toLocaleDateString(undefined, { day: "numeric", month: "short" }); };
+  const rows = (title) => $$(".task").filter((li) => li.querySelector(".title")?.textContent === title);
+  await add("Water plants", ymd(0), "home", "daily");
+  let plants = rows("Water plants");
+  check("recurring task shows its repeat badge", plants.length === 1 && plants[0].querySelector(".repeat")?.textContent === "↻ Daily");
+  plants[0].querySelector("input[type=checkbox]").click(); await wait(300);
+  plants = rows("Water plants");
+  const doneCopy = plants.find((li) => li.classList.contains("done"));
+  const nextCopy = plants.find((li) => !li.classList.contains("done"));
+  check("ticking a recurring task keeps it done and adds the next one", plants.length === 2 && doneCopy && nextCopy, String(plants.length));
+  check("next occurrence is due tomorrow and keeps tags and repeat",
+    nextCopy && nextCopy.querySelector(".due").textContent === `Due ${label(ymd(1))}` &&
+    nextCopy.querySelector(".tag")?.textContent === "home" && nextCopy.querySelector(".repeat")?.textContent === "↻ Daily");
+  doneCopy.querySelector("input[type=checkbox]").click(); await wait(200);
+  const reTick = rows("Water plants").filter((li) => !li.classList.contains("done"));
+  reTick[0].querySelector("input[type=checkbox]").click(); await wait(300);
+  check("unticking and re-ticking creates no duplicate", rows("Water plants").length === 2, String(rows("Water plants").length));
+
+  await add("Team report", ymd(-20), "work", "weekly");
+  rows("Team report")[0].querySelector("input[type=checkbox]").click(); await wait(300);
+  const report = rows("Team report").find((li) => !li.classList.contains("done"));
+  check("overdue weekly task skips ahead to the next weekly date", rows("Team report").length === 2 && report && report.querySelector(".due").textContent === `Due ${label(ymd(1))}`, report?.querySelector(".due").textContent);
+
+  await add("Stretch", "", "", "daily");
+  check("repeat without a date starts today", rows("Stretch")[0]?.querySelector(".due")?.textContent === `Due ${label(ymd(0))}`);
+
+  rows("Stretch")[0].querySelector(".edit").click(); await wait(200);
+  check("edit form shows the repeat setting", $(".task.editing .edit-repeat")?.value === "daily");
+  $(".task.editing .edit-repeat").value = "none";
+  $(".task.editing form").requestSubmit(); await wait(200);
+  check("setting repeat to None removes the badge", rows("Stretch").length === 1 && !rows("Stretch")[0].querySelector(".repeat"));
+  rows("Stretch")[0].querySelector("input[type=checkbox]").click(); await wait(300);
+  check("a task that no longer repeats doesn't spawn", rows("Stretch").length === 1);
+
   // --- legacy tasks from #3 still load ---
   document.querySelector("iframe").remove();
   await wait(100);
@@ -162,7 +217,7 @@ try {
   await seedLegacyTask();
   localStorage.removeItem("todo-filters");
   doc = await loadFrame();
-  check("legacy task without due date or tags renders", titles()[0] === "Legacy task" && !$(".task .due") && !$(".task .tag"));
+  check("legacy task without due date, tags or repeat renders", titles()[0] === "Legacy task" && !$(".task .due") && !$(".task .tag") && !$(".task .repeat"));
 } catch (e) {
   check("no exceptions", false, (e && e.stack) || String(e));
 }

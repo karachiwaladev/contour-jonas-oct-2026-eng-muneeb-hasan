@@ -50,7 +50,8 @@ h1 { margin: 0 0 16px; font-size: 28px; }
 #new-task-tags { flex: 1 1 160px; }
 
 input[type="text"],
-input[type="date"] {
+input[type="date"],
+select {
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -128,6 +129,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 .task .actions { display: flex; gap: 6px; flex: none; }
 
 .due { font-size: 13px; color: var(--muted); }
+.repeat { font-size: 13px; color: var(--accent); font-weight: 600; }
 .due.overdue { color: var(--danger); background: var(--danger-bg); padding: 1px 8px; border-radius: 999px; font-weight: 600; }
 
 .task.editing { display: block; }
