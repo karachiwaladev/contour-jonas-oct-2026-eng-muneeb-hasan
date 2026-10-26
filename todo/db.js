@@ -30,9 +30,20 @@ async function run(mode, fn) {
   });
 }
 
-// Tasks saved before due dates and tags existed lack those fields.
+// Tasks saved before due dates, tags (#4) or repeats (#5) existed lack those fields.
 function normalize(task) {
-  return { ...task, dueDate: task.dueDate || null, tags: Array.isArray(task.tags) ? task.tags : [] };
+  return {
+    ...task,
+    dueDate: task.dueDate || null,
+    tags: Array.isArray(task.tags) ? task.tags : [],
+    repeat: task.repeat || "none",
+    repeatDay: task.repeatDay || null,
+    spawned: Boolean(task.spawned),
+  };
+}
+
+function newTask({ title, dueDate = null, tags = [], repeat = "none", repeatDay = null }) {
+  return { title, done: false, dueDate, tags, repeat, repeatDay, spawned: false, createdAt: Date.now() };
 }
 
 export async function getAllTasks() {
@@ -40,8 +51,17 @@ export async function getAllTasks() {
   return tasks.map(normalize);
 }
 
-export function addTask({ title, dueDate = null, tags = [] }) {
-  return run("readwrite", (store) => store.add({ title, done: false, dueDate, tags, createdAt: Date.now() }));
+export function addTask(fields) {
+  return run("readwrite", (store) => store.add(newTask(fields)));
+}
+
+// Marks a recurring occurrence done and adds the next one in a single transaction,
+// so a reload or error can never leave one without the other.
+export function completeAndSpawn(task, next) {
+  return run("readwrite", (store) => {
+    store.put({ ...task, done: true, spawned: true });
+    return store.add(newTask(next));
+  });
 }
 
 export function updateTask(task) {
