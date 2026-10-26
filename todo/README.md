@@ -39,7 +39,18 @@ Then open http://localhost:8000.
 | `db.js` | IndexedDB wrapper (`todo-app` database, `tasks` store) |
 | `recurrence.js` | Pure date maths for repeats: `nextDueDate(dueDate, repeat, today, anchorDay)` |
 | `test.html` | Browser test: open http://localhost:8000/test.html. It **wipes the `todo-app` database and saved filters**, drives the UI and prints PASS/FAIL per check |
+| `coverage.mjs` | Runs `test.html` in headless Chrome and reports line and function coverage (see [Test coverage](#test-coverage)) |
 | `screenshots/` | Screenshots from the in-browser check of each ticket |
+
+## Test coverage
+
+```bash
+node todo/coverage.mjs
+```
+
+It needs Node 22+ and Chrome or Edge (set `CHROME_PATH` if they aren't in the usual place), and no packages. It serves the folder, runs `test.html` in headless Chrome with V8's coverage turned on, prints the test results and a table of line and function coverage for `app.js`, `db.js` and `recurrence.js`, and lists the lines that didn't run. It exits non-zero if a test fails. It uses its own temporary browser profile, so it doesn't touch your todo data.
+
+A line counts as covered if any of it ran. Lines where only part ran (e.g. the right side of `a || b` was never needed) are listed as "partly run".
 
 ## Data model
 
