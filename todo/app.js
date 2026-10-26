@@ -1,7 +1,7 @@
-import { addTask, completeAndSpawn, deleteTask, getAllTasks, updateTask } from "./db.js";
+import { NAMESPACE, addTask, completeAndSpawn, deleteTask, getAllTasks, updateTask } from "./db.js";
 import { REPEATS, REPEAT_LABELS, dayOf, nextDueDate } from "./recurrence.js";
 
-const FILTERS_KEY = "todo-filters";
+const FILTERS_KEY = NAMESPACE ? `todo-filters-${NAMESPACE}` : "todo-filters";
 const STATUSES = ["all", "incomplete", "completed"];
 
 const form = document.querySelector("#new-task");
@@ -14,9 +14,38 @@ const tagFilter = document.querySelector("#tag-filter");
 const list = document.querySelector("#tasks");
 const empty = document.querySelector("#empty");
 const count = document.querySelector("#count");
+const errorBox = document.querySelector("#error");
+
+const SAVE_FAILED = "Couldn't save your change. Your browser may be blocking storage or be out of space. Nothing you typed was lost, so try again.";
+const LOAD_FAILED = "Couldn't load your tasks. Your browser may be blocking storage. Reload the page to try again.";
 
 let filters = loadFilters();
 let editingId = null;
+let renders = 0;
+
+function showError(message) {
+  errorBox.textContent = message;
+  errorBox.hidden = false;
+}
+
+function clearError() {
+  errorBox.hidden = true;
+  errorBox.textContent = "";
+}
+
+// Runs a storage write. On failure it shows an error and returns false, so callers keep
+// what the user typed and the list keeps showing what is actually saved.
+async function save(write) {
+  try {
+    await write();
+    clearError();
+    return true;
+  } catch (error) {
+    console.error("Saving failed:", error);
+    showError(SAVE_FAILED);
+    return false;
+  }
+}
 
 function loadFilters() {
   try {
@@ -79,13 +108,15 @@ function schedule(dueDate, repeat, previous = null) {
 }
 
 async function setDone(task, done) {
-  if (done && task.repeat !== "none" && !task.spawned) {
-    const anchor = task.repeatDay || dayOf(task.dueDate);
-    const dueDate = nextDueDate(task.dueDate, task.repeat, today(), anchor);
-    await completeAndSpawn(task, { title: task.title, tags: task.tags, repeat: task.repeat, repeatDay: anchor, dueDate });
-  } else {
-    await updateTask({ ...task, done });
-  }
+  await save(() => {
+    if (done && task.repeat !== "none" && !task.spawned) {
+      const anchor = task.repeatDay || dayOf(task.dueDate);
+      const dueDate = nextDueDate(task.dueDate, task.repeat, today(), anchor);
+      return completeAndSpawn(task, { title: task.title, tags: task.tags, repeat: task.repeat, repeatDay: anchor, dueDate });
+    }
+    return updateTask({ ...task, done });
+  });
+  // Re-render either way: after a failure this puts the checkbox back to the saved state.
   await render();
 }
 
@@ -135,8 +166,7 @@ function renderTask(task) {
   const remove = el("button", { type: "button", className: "secondary delete", textContent: "Delete" });
   remove.setAttribute("aria-label", `Delete "${task.title}"`);
   remove.addEventListener("click", async () => {
-    await deleteTask(task.id);
-    await render();
+    if (await save(() => deleteTask(task.id))) await render();
   });
 
   item.append(checkbox, body, el("div", { className: "actions" }, [edit, remove]));
@@ -153,7 +183,7 @@ function renderEditor(task) {
   const repeat = repeatSelect(task.repeat, { name: "repeat", className: "edit-repeat" });
   repeat.setAttribute("aria-label", "Repeat");
 
-  const save = el("button", { type: "submit", textContent: "Save" });
+  const saveButton = el("button", { type: "submit", textContent: "Save" });
   const cancel = el("button", { type: "button", className: "secondary", textContent: "Cancel" });
   const stopEditing = () => {
     editingId = null;
@@ -161,7 +191,7 @@ function renderEditor(task) {
   };
   cancel.addEventListener("click", stopEditing);
 
-  const editor = el("form", { className: "editor" }, [title, due, repeat, tags, el("div", { className: "actions" }, [save, cancel])]);
+  const editor = el("form", { className: "editor" }, [title, due, repeat, tags, el("div", { className: "actions" }, [saveButton, cancel])]);
   editor.addEventListener("keydown", (event) => {
     if (event.key === "Escape") stopEditing();
   });
@@ -173,7 +203,9 @@ function renderEditor(task) {
       title.reportValidity();
       return;
     }
-    await updateTask({ ...task, title: newTitle, tags: parseTags(tags.value), ...schedule(due.value || null, repeat.value, task) });
+    const fields = { title: newTitle, tags: parseTags(tags.value), ...schedule(due.value || null, repeat.value, task) };
+    // On failure the editor stays open with the new values, so Save can be pressed again.
+    if (!(await save(() => updateTask({ ...task, ...fields })))) return;
     editingId = null;
     await render();
   });
@@ -206,6 +238,15 @@ function renderFilters(tasks) {
 }
 
 async function render() {
+  try {
+    await renderTasks();
+  } catch (error) {
+    console.error("Loading failed:", error);
+    showError(LOAD_FAILED);
+  }
+}
+
+async function renderTasks() {
   const tasks = await getAllTasks();
   const allTags = new Set(tasks.flatMap((t) => t.tags));
   if (filters.tag && !allTags.has(filters.tag)) {
@@ -221,6 +262,8 @@ async function render() {
   empty.textContent = tasks.length ? "No tasks match these filters." : "No tasks yet. Add one above.";
   const remaining = tasks.filter((t) => !t.done).length;
   count.textContent = tasks.length ? `${remaining} of ${tasks.length} left` : "";
+  // Lets the tests wait for a finished render instead of sleeping for a fixed time.
+  document.body.dataset.renders = String(++renders);
 }
 
 statusFilter.addEventListener("click", (event) => {
@@ -232,7 +275,9 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = titleInput.value.trim();
   if (!title) return;
-  await addTask({ title, tags: parseTags(tagsInput.value), ...schedule(dueInput.value || null, repeatInput.value) });
+  const fields = { title, tags: parseTags(tagsInput.value), ...schedule(dueInput.value || null, repeatInput.value) };
+  // On failure the form keeps what was typed, so Add can be pressed again.
+  if (!(await save(() => addTask(fields)))) return;
   form.reset();
   titleInput.focus();
   await render();
