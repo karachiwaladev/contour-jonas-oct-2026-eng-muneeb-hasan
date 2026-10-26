@@ -1,20 +1,33 @@
 #!/usr/bin/env bash
-# Stop hook: commit any changes in the project and push them to its remote.
+# Stop hook: commit any changes on a working branch and push them to its remote.
+# The default branch (main) only changes through reviewed pull requests, so on it this
+# hook commits and pushes nothing and just reports what is left uncommitted. Prompts
+# are logged separately on the `prompt-log` branch (see prompt-log.sh).
 # Non-destructive by design: never forces, never rewrites pushed history, skips
 # while a merge/rebase is in progress, and refuses to commit likely secrets
 # (see secret-scan.sh).
 
-say() { printf '{"systemMessage": "auto-commit: %s"}\n' "$1"; }
+# PROMPT_LOG_MSG is prompt-log.sh's status line; the hook can print only one message.
+say() { printf '{"systemMessage": "%sauto-commit: %s"}\n' "${PROMPT_LOG_MSG:+$PROMPT_LOG_MSG; }" "$1"; }
+quiet_exit() { [ -n "$PROMPT_LOG_MSG" ] && printf '{"systemMessage": "%s"}\n' "$PROMPT_LOG_MSG"; exit 0; }
 git_push() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"; }
 
-cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || exit 0
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || quiet_exit
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || quiet_exit
 
 git_dir=$(git rev-parse --git-dir)
 for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
   if [ -e "$git_dir/$marker" ]; then say "skipped, a git operation is in progress"; exit 0; fi
 done
 branch=$(git symbolic-ref --short -q HEAD) || { say "skipped, HEAD is detached"; exit 0; }
+
+default=$(git symbolic-ref -q --short refs/remotes/origin/HEAD | sed 's@^origin/@@')
+if [ "$branch" = "${default:-main}" ]; then
+  dirty=$(git status --porcelain | wc -l | tr -d ' ')
+  [ "$dirty" = "0" ] && quiet_exit
+  say "left $dirty uncommitted change(s) on $branch; it only changes through pull requests"
+  exit 0
+fi
 
 if [ -n "$(git status --porcelain)" ]; then
   git add -A 2>/dev/null
@@ -38,11 +51,12 @@ fi
 if git rev-parse -q --verify "@{u}" >/dev/null; then
   ahead=$(git rev-list --count "@{u}..HEAD")
 else
-  ahead=$(git rev-list --count HEAD)
+  # No upstream yet: count only commits the remote doesn't have on any branch.
+  ahead=$(git rev-list --count HEAD --not --remotes=origin)
 fi
 if [ "$ahead" = "0" ]; then
-  [ -n "$held" ] && say "did not commit possible secrets: $held"
-  exit 0
+  [ -n "$held" ] && { say "did not commit possible secrets: $held"; exit 0; }
+  quiet_exit
 fi
 
 if ! git_push push -q origin "HEAD:$branch" >/dev/null 2>&1; then
