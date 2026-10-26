@@ -61,6 +61,9 @@ try {
     ["early completion keeps the schedule", nd("2026-11-10", "weekly", "2026-10-26"), "2026-11-17"],
   ];
   for (const [name, got, want] of cases) check(name, got === want, got);
+  let unknownRepeat = "no error";
+  try { nd("2026-10-26", "fortnightly", "2026-10-26"); } catch (e) { unknownRepeat = e.message; }
+  check("unknown repeat type throws", unknownRepeat === "Unknown repeat: fortnightly", unknownRepeat);
 
   await new Promise((r) => { const q = indexedDB.deleteDatabase("todo-app"); q.onsuccess = q.onerror = q.onblocked = r; });
   localStorage.removeItem("todo-filters");
