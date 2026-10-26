@@ -55,6 +55,7 @@ Keep context small and load detail only when it's needed:
 | `.claude/skills/factory-loop/` | Skill that answers tickets, or asks, plans, builds, PRs and merges them |
 | `.claude/settings.json` | Stop hook: logs prompts, then `.claude/hooks/auto-commit.sh` commits and pushes |
 | `.claude/hooks/secret-scan.sh` | Blocks staged files that look like secrets (names or token/key content) |
+| `.github/workflows/todo-tests.yml` | CI: runs the todo tests and coverage report on every PR that touches `todo/` |
 | `.mcp.json` | `chrome-devtools-isolated` MCP server (own browser profile) for in-browser checks |
 | `.claude/prompts.jsonl` | Log of typed prompts (one JSON object per line), appended on every stop |
 | `README.md` | Workshop instructions and scoring (not factory docs) |

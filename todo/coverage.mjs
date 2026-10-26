@@ -49,7 +49,10 @@ function serve() {
 function launch(browserPath, profileDir) {
   const proc = spawn(browserPath, [
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profileDir}`,
-    "--no-first-run", "--no-default-browser-check", "about:blank",
+    "--no-first-run", "--no-default-browser-check",
+    // CI runners (e.g. GitHub's Ubuntu images) don't allow Chrome's sandbox.
+    ...(process.env.CI ? ["--no-sandbox"] : []),
+    "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"] });
   const wsUrl = new Promise((resolve, reject) => {
     let err = "";
