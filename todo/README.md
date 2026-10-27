@@ -40,6 +40,8 @@ Then open http://localhost:8000.
 | `db.js` | IndexedDB wrapper (`todo-app` database, `tasks` store) |
 | `recurrence.js` | Pure date maths for repeats: `nextDueDate(dueDate, repeat, today, anchorDay)` |
 | `test.html` | Browser tests: open http://localhost:8000/test.html. They run the app as `index.html?ns=test`, which uses its own `todo-app-test` database and filters, so **your real tasks are not touched**. Prints PASS/FAIL per check |
+| `eval/acceptance.html`, `eval/acceptance.js` | Acceptance eval for tickets #3–#5: open http://localhost:8000/eval/acceptance.html. One scenario per ticket requirement plus edge, failure and persistence cases, reported as pass / fail / skip / unclear. It also **wipes the `todo-app` database and saved filters** |
+| `eval/REPORT.md` | Scenarios, decisions on unclear requirements, latest results (on `main` and PR #9) and remaining gaps |
 | `coverage.mjs` | Runs `test.html` in headless Chrome and reports line and function coverage (see [Test coverage](#test-coverage)) |
 | `screenshots/` | Screenshots from the in-browser check of each ticket |
 

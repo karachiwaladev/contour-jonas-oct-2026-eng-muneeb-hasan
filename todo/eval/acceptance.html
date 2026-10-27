@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Todo acceptance eval</title>
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 12px; }
+    th, td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; vertical-align: top; }
+    .PASS { color: #166534; } .FAIL { color: #b91c1c; font-weight: 600; }
+    .SKIP { color: #6b7280; } .UNCLEAR { color: #a16207; font-weight: 600; }
+    iframe { width: 720px; height: 420px; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <h1>Todo acceptance eval</h1>
+  <p>Tickets #3–#5. <strong>Wipes the <code>todo-app</code> database and saved filters.</strong> Status: <span id="status">running…</span></p>
+  <div id="summary"></div>
+  <table id="results"><thead><tr><th>ID</th><th>Ticket</th><th>Kind</th><th>Scenario</th><th>Result</th><th>Detail</th></tr></thead><tbody></tbody></table>
+  <div id="frame-host"></div>
+  <script type="module" src="acceptance.js"></script>
+</body>
+</html>

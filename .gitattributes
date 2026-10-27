@@ -1,0 +1,3 @@
+# The prompt log is append-only: when two clones add lines at once, keep both sides
+# instead of conflicting (log-prompts.py skips prompts already logged by uuid).
+.claude/prompts.jsonl merge=union
