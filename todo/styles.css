@@ -54,6 +54,7 @@ h1 { margin: 0 0 16px; font-size: 28px; }
 #new-task-tags { flex: 1 1 160px; }
 
 input[type="text"],
+input[type="search"],
 input[type="date"],
 select {
   min-width: 0;
@@ -98,6 +99,10 @@ button.delete { color: var(--danger); }
 #error[hidden] { display: none; }
 
 /* Filters */
+#search-row { display: flex; gap: 8px; margin-bottom: 12px; }
+#search { flex: 1; }
+#search::-webkit-search-cancel-button { display: none; } /* the app has its own clear button */
+#search-clear[hidden] { display: none; }
 #filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 #status-filter, #priority-filter { display: inline-flex; align-self: flex-start; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 #status-filter button, #priority-filter button {

@@ -504,6 +504,93 @@ test("priority: unknown or missing saved priority filter falls back to All", asy
 }, { openApp: false });
 
 // ======================================================================
+// Search (#18)
+// ======================================================================
+
+const search = (text) => act(() => {
+  $("#search").value = text;
+  $("#search").dispatchEvent(new Event("input", { bubbles: true }));
+}, `the search "${text}"`);
+
+async function searchTasks() {
+  await add("Weekly report", { tags: "work", priority: "high" });
+  await add("Buy milk", { tags: "home" });
+  await add("Call mom", { tags: "family" });
+}
+
+test("search: matches the title, a tag or part of a word, ignoring case", async () => {
+  await searchTasks();
+  await search("REP");
+  check("title, any case", JSON.stringify(titles()) === '["Weekly report"]', JSON.stringify(titles()));
+  await search("hom");
+  check("part of a tag", JSON.stringify(titles()) === '["Buy milk"]', JSON.stringify(titles()));
+  await search("milk");
+  check("part of a title", JSON.stringify(titles()) === '["Buy milk"]', JSON.stringify(titles()));
+  await search("   ");
+  check("spaces only means no search", titles().length === 3, JSON.stringify(titles()));
+});
+
+test("search: every word must match, across title and tags", async () => {
+  await searchTasks();
+  await search("report work");
+  check("title word + tag word", JSON.stringify(titles()) === '["Weekly report"]', JSON.stringify(titles()));
+  await search("report home");
+  check("no task has both words", titles().length === 0, JSON.stringify(titles()));
+  check("no-match message", !$("#empty").hidden && $("#empty").textContent === "No tasks match these filters.", $("#empty").textContent);
+});
+
+test("search: special characters are matched as plain text", async () => {
+  await add("Fix (urgent) bug.*");
+  await add("Plain task");
+  await search("(urgent)");
+  check("brackets", JSON.stringify(titles()) === '["Fix (urgent) bug.*"]', JSON.stringify(titles()));
+  await search(".*");
+  check("dot-star is not a wildcard", JSON.stringify(titles()) === '["Fix (urgent) bug.*"]', JSON.stringify(titles()));
+});
+
+test("search: combines with the status, tag and priority filters", async () => {
+  await add("Write report", { tags: "work", priority: "high" });
+  await add("Read report", { tags: "work", priority: "high" });
+  await add("Report taxes", { tags: "home", priority: "high" });
+  await add("File report", { tags: "work", priority: "low" });
+  await tick("Read report");
+  const before = [counts("#status-filter"), counts("#priority-filter")].join(" | ");
+  await search("report");
+  check("search alone", titles().length === 4, JSON.stringify(titles()));
+  check("filter counts unchanged by search", [counts("#status-filter"), counts("#priority-filter")].join(" | ") === before, before);
+  await act(() => statusBtn("incomplete").click(), "the incomplete filter");
+  await act(() => filterTag("work").click(), "the work filter");
+  await act(() => priorityBtn("high").click(), "the High filter");
+  check("search + incomplete + work + High", JSON.stringify(titles()) === '["Write report"]', JSON.stringify(titles()));
+});
+
+test("search: × and Escape clear it", async () => {
+  await searchTasks();
+  check("× hidden while empty", $("#search-clear").hidden);
+  await search("milk");
+  check("× shown while searching", !$("#search-clear").hidden);
+  await act(() => $("#search-clear").click(), "the × button");
+  check("× clears the box and shows everything", $("#search").value === "" && titles().length === 3 && $("#search-clear").hidden,
+    JSON.stringify(titles()));
+  await search("mom");
+  await act(() => $("#search").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), "Escape");
+  check("Escape clears the box and shows everything", $("#search").value === "" && titles().length === 3, JSON.stringify(titles()));
+});
+
+test("search: not saved after a reload, while the other filters are", async () => {
+  await searchTasks();
+  await tick("Call mom");
+  await act(() => statusBtn("incomplete").click(), "the incomplete filter");
+  await search("milk");
+  check("search applied", JSON.stringify(titles()) === '["Buy milk"]', JSON.stringify(titles()));
+  check("search isn't in the saved filters", !(localStorage.getItem(FILTERS_KEY) || "").includes("milk"), localStorage.getItem(FILTERS_KEY));
+  await open();
+  check("box starts empty", $("#search").value === "" && $("#search-clear").hidden);
+  check("status filter kept, no search applied", pressed(statusBtn("incomplete")) && JSON.stringify(titles()) === '["Weekly report","Buy milk"]',
+    JSON.stringify(titles()));
+});
+
+// ======================================================================
 // Unusual input
 // ======================================================================
 
