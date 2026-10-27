@@ -8,6 +8,7 @@ A simple todo list that runs entirely in the browser. Built for [Ticket #3](http
 - **Due dates** (optional, date only). Incomplete tasks past their due date are highlighted as **Overdue**; due today is not overdue
 - **Tags** (optional, comma-separated). Trimmed, lowercased and de-duplicated, shown as chips
 - **Priority** (High / Medium / Low, #8), chosen when adding (preset to Medium) and in the editor. Each task shows it as a badge: High in red, Medium in amber, Low in grey
+- **Search** (#18) as you type: every word must appear in a task's title or tags (case-insensitive, matched as plain text). It combines with the status, tag and priority filters, doesn't change their counts, clears with **×** or Escape, and isn't saved, so a reload starts with no search
 - **Status filter:** All / Incomplete / Completed, with counts
 - **Priority filter:** All / High / Medium / Low, with counts of all tasks at each priority. One at a time, combined with the status and tag filters
 - **Tag filter:** chips for every tag in use, one at a time, combined with the status filter. Clicking a tag on a task applies it

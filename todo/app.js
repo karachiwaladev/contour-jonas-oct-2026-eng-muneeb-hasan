@@ -19,12 +19,16 @@ const list = document.querySelector("#tasks");
 const empty = document.querySelector("#empty");
 const count = document.querySelector("#count");
 const errorBox = document.querySelector("#error");
+const searchInput = document.querySelector("#search");
+const searchClear = document.querySelector("#search-clear");
 
 const SAVE_FAILED = "Couldn't save your change. Your browser may be blocking storage or be out of space. Nothing you typed was lost, so try again.";
 const LOAD_FAILED = "Couldn't load your tasks. Your browser may be blocking storage. Reload the page to try again.";
 
 let filters = loadFilters();
 let editingId = null;
+// Lowercased words from the search box. Kept in memory only, so a reload starts with no search.
+let searchWords = [];
 let renders = 0;
 
 function showError(message) {
@@ -98,7 +102,14 @@ function matchesFilters(task) {
   if (filters.status === "incomplete" && task.done) return false;
   if (filters.status === "completed" && !task.done) return false;
   if (filters.priority !== "all" && task.priority !== filters.priority) return false;
-  return !filters.tag || task.tags.includes(filters.tag);
+  if (filters.tag && !task.tags.includes(filters.tag)) return false;
+  return matchesSearch(task);
+}
+
+// Every search word must appear (as plain text, case-insensitive) in the title or in a tag.
+function matchesSearch(task) {
+  const fields = [task.title, ...task.tags].map((text) => text.toLowerCase());
+  return searchWords.every((word) => fields.some((text) => text.includes(word)));
 }
 
 function el(tag, props = {}, children = []) {
@@ -293,6 +304,27 @@ priorityFilter.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-priority]");
   if (button) setFilters({ priority: button.dataset.priority });
 });
+
+function applySearch() {
+  searchWords = searchInput.value.toLowerCase().split(/\s+/).filter(Boolean);
+  searchClear.hidden = searchInput.value === "";
+  render();
+}
+
+function clearSearch() {
+  searchInput.value = "";
+  applySearch();
+  searchInput.focus();
+}
+
+searchInput.addEventListener("input", applySearch);
+searchInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    clearSearch();
+  }
+});
+searchClear.addEventListener("click", clearSearch);
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
