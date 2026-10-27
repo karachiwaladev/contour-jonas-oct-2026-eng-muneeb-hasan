@@ -658,7 +658,9 @@ scenario("4.26", "#4", "edge", "Adding a task while a filter hides it saves the 
   await clickTagFilter("work");
   await add("New one", { tags: "home" });
   eq(byTitle(await dbAll(), "New one").length, 1, "stored copies of the new task");
-  eq(JSON.parse(localStorage.getItem(FILTERS_KEY)), { status: "completed", tag: "work" }, "saved filters");
+  // Only the filters #4 defines; later tickets (e.g. priority, #8) may save more.
+  const { status, tag } = JSON.parse(localStorage.getItem(FILTERS_KEY));
+  eq({ status, tag }, { status: "completed", tag: "work" }, "saved filters");
   eq($('[data-status="completed"]').getAttribute("aria-pressed"), "true", "Completed still pressed");
   eq(titles(), ["Done one"], "list (the new task stays hidden by the filters)");
   eq(countOf("all"), 2, "All count");

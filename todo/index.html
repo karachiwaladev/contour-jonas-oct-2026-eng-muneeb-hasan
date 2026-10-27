@@ -19,6 +19,11 @@
         <option value="monthly">Monthly</option>
         <option value="yearly">Yearly</option>
       </select>
+      <select id="new-task-priority" aria-label="Priority">
+        <option value="high">High</option>
+        <option value="medium" selected>Medium</option>
+        <option value="low">Low</option>
+      </select>
       <input id="new-task-tags" type="text" placeholder="Tags, e.g. work, urgent" aria-label="Tags (optional, comma-separated)" autocomplete="off">
       <button type="submit">Add</button>
     </form>
@@ -28,6 +33,15 @@
         <button type="button" data-status="all" aria-pressed="true">All <span class="n">0</span></button>
         <button type="button" data-status="incomplete" aria-pressed="false">Incomplete <span class="n">0</span></button>
         <button type="button" data-status="completed" aria-pressed="false">Completed <span class="n">0</span></button>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label" id="priority-label">Priority</span>
+        <div id="priority-filter" role="group" aria-labelledby="priority-label">
+          <button type="button" data-priority="all" aria-pressed="true">All <span class="n">0</span></button>
+          <button type="button" data-priority="high" aria-pressed="false">High <span class="n">0</span></button>
+          <button type="button" data-priority="medium" aria-pressed="false">Medium <span class="n">0</span></button>
+          <button type="button" data-priority="low" aria-pressed="false">Low <span class="n">0</span></button>
+        </div>
       </div>
       <div id="tag-filter" role="group" aria-label="Filter by tag" hidden></div>
     </div>
