@@ -42,9 +42,11 @@ Then open http://localhost:8000.
 | `db.js` | IndexedDB wrapper (`todo-app` database, `tasks` store) |
 | `recurrence.js` | Pure date maths for repeats: `nextDueDate(dueDate, repeat, today, anchorDay)` |
 | `test.html` | Browser tests: open http://localhost:8000/test.html. They run the app as `index.html?ns=test`, which uses its own `todo-app-test` database and filters, so **your real tasks are not touched**. Prints PASS/FAIL per check |
-| `eval/acceptance.html`, `eval/acceptance.js` | Acceptance eval for tickets #3–#5: open http://localhost:8000/eval/acceptance.html. One scenario per ticket requirement plus edge, failure and persistence cases, reported as pass / fail / skip / unclear. It also **wipes the `todo-app` database and saved filters** |
-| `eval/REPORT.md` | Scenarios, decisions on unclear requirements, latest results (on `main` and PR #9) and remaining gaps |
+| `eval/acceptance.html`, `eval/acceptance.js` | Acceptance eval for tickets #3–#5 and #8: open http://localhost:8000/eval/acceptance.html, or run `node todo/eval/run.mjs`. One scenario per ticket requirement plus edge, failure and persistence cases, reported as pass / fail / skip / unclear. It also **wipes the `todo-app` database and saved filters** |
+| `eval/run.mjs` | Runs the acceptance eval in headless Chrome, prints the results and exits non-zero on a failure (`--markdown FILE` writes the full report) |
+| `eval/REPORT.md` | Scenarios, decisions on unclear requirements, latest results and remaining gaps |
 | `coverage.mjs` | Runs `test.html` in headless Chrome and reports line and function coverage (see [Test coverage](#test-coverage)) |
+| `headless.mjs` | Shared by `coverage.mjs` and `eval/run.mjs`: serves the folder and drives headless Chrome over the DevTools protocol, with a throwaway profile |
 | `screenshots/` | Screenshots from the in-browser check of each ticket |
 
 ## Test coverage
@@ -53,7 +55,7 @@ Then open http://localhost:8000.
 node todo/coverage.mjs
 ```
 
-It needs Node 22+ and Chrome or Edge (set `CHROME_PATH` if they aren't in the usual place), and no packages. It serves the folder, runs `test.html` in headless Chrome with V8's coverage turned on, prints the test results and a table of line and function coverage for `app.js`, `db.js` and `recurrence.js`, and lists the lines that didn't run. It exits non-zero if a test fails. It uses its own temporary browser profile, so it doesn't touch your todo data. It can run in CI (with `CI` set it starts Chrome without its sandbox, which GitHub's Linux runners need), but no GitHub Actions workflow runs it yet: adding one needs a token with the `workflow` scope.
+It needs Node 22+ and Chrome or Edge (set `CHROME_PATH` if they aren't in the usual place), and no packages. It serves the folder, runs `test.html` in headless Chrome with V8's coverage turned on, prints the test results and a table of line and function coverage for `app.js`, `db.js` and `recurrence.js`, and lists the lines that didn't run. It exits non-zero if a test fails. It uses its own temporary browser profile, so it doesn't touch your todo data. It can run in CI (with `CI` set it starts Chrome without its sandbox, which GitHub's Linux runners need), but no GitHub Actions workflow runs it yet: adding one needs a token with the `workflow` scope. The same applies to `node todo/eval/run.mjs`.
 
 ### How the tests are built
 
