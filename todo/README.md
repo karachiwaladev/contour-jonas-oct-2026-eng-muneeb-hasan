@@ -51,7 +51,7 @@ Then open http://localhost:8000.
 node todo/coverage.mjs
 ```
 
-It needs Node 22+ and Chrome or Edge (set `CHROME_PATH` if they aren't in the usual place), and no packages. It serves the folder, runs `test.html` in headless Chrome with V8's coverage turned on, prints the test results and a table of line and function coverage for `app.js`, `db.js` and `recurrence.js`, and lists the lines that didn't run. It exits non-zero if a test fails. It uses its own temporary browser profile, so it doesn't touch your todo data. GitHub Actions runs it on every pull request that touches `todo/` (`.github/workflows/todo-tests.yml`) and shows the output in the job summary.
+It needs Node 22+ and Chrome or Edge (set `CHROME_PATH` if they aren't in the usual place), and no packages. It serves the folder, runs `test.html` in headless Chrome with V8's coverage turned on, prints the test results and a table of line and function coverage for `app.js`, `db.js` and `recurrence.js`, and lists the lines that didn't run. It exits non-zero if a test fails. It uses its own temporary browser profile, so it doesn't touch your todo data. It can run in CI (with `CI` set it starts Chrome without its sandbox, which GitHub's Linux runners need), but no GitHub Actions workflow runs it yet: adding one needs a token with the `workflow` scope.
 
 ### How the tests are built
 

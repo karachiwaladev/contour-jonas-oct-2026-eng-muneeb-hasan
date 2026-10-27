@@ -57,7 +57,6 @@ Keep context small and load detail only when it's needed:
 | `.claude/settings.json` | Stop hook: runs `prompt-log.sh`, then `auto-commit.sh` (branches only, never `main`) |
 | `.claude/hooks/prompt-log.sh` | Logs typed prompts on the `prompt-log` branch, via a worktree at `.git/prompt-log` |
 | `.claude/hooks/secret-scan.sh` | Blocks staged files that look like secrets (names or token/key content) |
-| `.github/workflows/todo-tests.yml` | CI: runs the todo tests and coverage report on every PR that touches `todo/` |
 | `.mcp.json` | `chrome-devtools-isolated` MCP server (own browser profile) for in-browser checks |
 | `.claude/prompts.jsonl` | Log of typed prompts (one JSON object per line); current copy on `prompt-log` |
 | `.gitattributes` | Union-merges `prompts.jsonl` so logs from two clones don't conflict |
