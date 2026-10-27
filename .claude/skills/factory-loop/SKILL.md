@@ -1,6 +1,6 @@
 ---
 name: factory-loop
-description: Work through a GitHub repo's open issues end to end, both answering questions and doing the work tickets ask for. Acknowledge each issue with a 👀 reaction. Questions get answered in a comment. Tasks (build a project, add a feature, create files) go through clarifying questions and a plan posted on the ticket, wait for approval, then get built on a branch, verified in a real browser with chrome-devtools, and opened as a pull request with screenshots. The PR is merged only after a second approval. Never takes destructive actions: deletions, rewrites of history, force pushes and anything irreversible are flagged for a human instead. Before any write it checks which gh account is active and what permission it has, so Enterprise Managed User (EMU) 403s and read-only access get diagnosed instead of retried. Re-running it is safe, so it fits /loop (e.g. `/loop 5m /factory-loop`). Use this whenever the user asks to fetch, triage, answer, work on, build, respond to or close GitHub issues or tickets, "work the issue queue", "run the factory", or keep watching a repo for new tickets, even if they don't say "factory-loop".
+description: Work through a GitHub repo's open issues end to end. Questions get answered in a comment; tasks go through clarifying questions and an approved plan, then get built on a branch, checked in a browser and opened as a pull request that merges only after a second approval. Destructive actions go to a human. Safe to re-run, so it fits /loop. Use this whenever the user asks to fetch, triage, answer, work on, build, respond to or close GitHub issues or tickets, "work the issue queue", "run the factory", or keep watching a repo for new tickets, even if they don't say "factory-loop".
 ---
 
 # factory-loop
@@ -52,7 +52,7 @@ export GH_TOKEN="$(gh auth token --user OTHER_LOGIN)"
 git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin HEAD
 ```
 
-If there's no usable account, stop before any writes and tell the user to run `! gh auth login` with a personal account. Don't attempt writes you already know will 403. Permissions can change mid-session, so re-check instead of assuming.
+If there's no usable account, stop before any writes and tell the user to run `! gh auth login` with a personal account. Don't attempt writes you already know will 403. Permissions can change mid-session, so re-check instead of assuming. Pushing `.github/workflows/*` also needs the token's `workflow` scope (`gh auth status` lists scopes). Without it, ask the user to run `! gh auth refresh -h github.com -s workflow`, and don't promise CI until then.
 
 If the working tree has uncommitted changes you didn't make, don't build on top of them. Report them and handle only question tickets on this pass.
 
@@ -96,7 +96,7 @@ An issue **needs work** if it's open and either:
 - it has no marker comment yet (a new ticket), or
 - a human comment (no marker) arrived after the latest marker comment.
 
-Otherwise skip it. It's either finished or **waiting**: on answers to questions, on plan approval, or on PR merge approval. A waiting ticket costs nothing per tick, and it wakes up when someone replies. If a `done` or `answer` ticket is still open (a previous pass lacked permission to close), it only needs the close step. Comments from before markers existed count as `answer`/`done` if they are the loop's.
+Otherwise skip it. It's either finished or **waiting**: on answers to questions, on plan approval, or on PR merge approval. A waiting ticket costs nothing per tick, and it wakes up when someone replies. If a `done` or `answer` ticket is still open (a previous pass lacked permission to close), it only needs the close step.
 
 Work through tickets **oldest first**. Later tickets often build on earlier ones (e.g. "add filters to the todo app" after "build a todo app").
 
@@ -122,7 +122,7 @@ Read the title, the body **and** the existing comments, then sort the ticket:
 
 Post it as an `answer` comment.
 
-- Lead with the direct answer in bold, then 1–3 supporting bullets, then at most one line of context.
+- Lead with the direct answer in bold, then only the supporting points a reader needs to trust it. Someone skimming the ticket should get the answer at a glance.
 - Use real figures and name their source and date (e.g. "2023 census"). If the fact could have changed since your training, check it with WebSearch first.
 - If the question is ambiguous, answer the likeliest reading and add one line on the other. For a follow-up, answer only the new question and refer back to your earlier comment.
 
@@ -175,7 +175,7 @@ From stage 4 on, the approved `plan` comment is the contract. Don't re-read the 
 
    The Stop hook doesn't commit there, so commit and push yourself. Remove the worktree with `git worktree remove` once the PR is open.
 2. **Build exactly the approved plan.** If you discover the plan can't work as written, don't improvise a different design. Post a revised `plan` and wait. Follow `CLAUDE.md` conventions: new projects go in their own top-level folder with a `README.md`, and changes to an existing project stay inside its folder. Prefer no-build, dependency-free code so it runs from a fresh clone.
-3. **Run any existing tests.** They must still pass, and you should add tests for the new behaviour.
+3. **Run the project's existing tests**, including any headless runners its README lists. They must still pass, and you should add tests for the new behaviour.
 4. **Verify in a real browser with the chrome-devtools MCP tools.** Serve the project (e.g. `python -m http.server <port>` in the background). The server takes a moment to start, so poll the URL until it answers 200 before opening it. Then:
    - open the page with `new_page` in a fresh `isolatedContext` for each run. Chrome caches ES modules across reloads, so a reused context can test yesterday's code;
    - exercise every feature in the plan with `fill`, `click`, `press_key` and `evaluate_script`, checking the results. Take a new `take_snapshot` after anything that re-renders, because element uids from an older snapshot go stale ("did not become interactive");
@@ -280,7 +280,7 @@ gh issue comment N --repo OWNER/NAME --body-file /path/to/comment.md
 
 ### When a step fails
 
-Read the error before acting on it. These are the failures past runs actually hit, and what each one means:
+Read the error before acting on it. Common failures and what each one means:
 
 | What you see | What it means | What to do |
 |---|---|---|
@@ -290,7 +290,7 @@ Read the error before acting on it. These are the failures past runs actually hi
 | "File has been modified since read" | Something else changed the file | Re-read it. If you didn't change it, run `git status`: another session may be working here (section 2). |
 | In PowerShell, `bash` fails with a `WSL ... execvpe(/bin/bash)` error | That `bash` is WSL, not Git Bash, so the secret scan didn't run | Run bash commands with the Bash tool, never `bash` from PowerShell. A commit chained after the failed scan correctly didn't happen. |
 | `unexpected EOF`, a `SyntaxError`, or real line breaks where you wrote `\n` | The shell mangled quotes, backslashes or escapes in an inline script | Write multi-line scripts and edits to a file with the Write tool and run the file. After generated edits, check syntax (`node --check file`). |
-| `gh: unknown shorthand flag` | `gh api` has no `-c` (compact) flag | Use `--jq` with a string template, e.g. `--jq '"\(.a) \(.b)"'`. |
+| An argument starting with `/`, or a `ref:path`, arrives as `C:/Program Files/Git/...` | Git Bash path conversion rewrote it | Prefix the command with `MSYS_NO_PATHCONV=1`. |
 | A non-zero exit code but the expected output | Usually the last command in a chain, or a deliberate check | Judge by the output. Rerun only the part that actually failed. |
 
 Report every failure once in the step 7 report, with the exact error. Don't retry the same failing call in a loop: two identical failures mean the approach is wrong.
@@ -322,7 +322,7 @@ factory-loop · OWNER/NAME · acting as LOGIN
 
 On a pass with nothing to do, report it in one line, naming tickets that are waiting (`factory-loop: nothing to do in OWNER/NAME (#13 waiting for answers, #15 waiting for plan approval, #16 waiting for merge approval on PR #17)`). Under `/loop` that line repeats every tick, so keep it that short.
 
-If a step failed, include the exact error message and the fix from the step 2 table.
+If a step failed, include the exact error message and its fix (from the step 2 table or "When a step fails"). When the user asked something, answer it in the first line. List anything left in priority order, each with why it's left and what it waits on.
 
 ## Running it on a loop
 
