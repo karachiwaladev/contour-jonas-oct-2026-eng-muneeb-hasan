@@ -40,7 +40,7 @@ Then open http://localhost:8000.
 | `recurrence.js` | Pure date maths for repeats: `nextDueDate(dueDate, repeat, today, anchorDay)` |
 | `test.html` | Browser test: open http://localhost:8000/test.html. It **wipes the `todo-app` database and saved filters**, drives the UI and prints PASS/FAIL per check |
 | `eval/acceptance.html`, `eval/acceptance.js` | Acceptance eval for tickets #3–#5: open http://localhost:8000/eval/acceptance.html. One scenario per ticket requirement plus edge, failure and persistence cases, reported as pass / fail / skip / unclear. It also **wipes the `todo-app` database and saved filters** |
-| `eval/REPORT.md` | Scenarios, latest results, unclear requirements and remaining gaps |
+| `eval/REPORT.md` | Scenarios, decisions on unclear requirements, latest results (on `main` and PR #9) and remaining gaps |
 | `coverage.mjs` | Runs `test.html` in headless Chrome and reports line and function coverage (see [Test coverage](#test-coverage)) |
 | `screenshots/` | Screenshots from the in-browser check of each ticket |
 

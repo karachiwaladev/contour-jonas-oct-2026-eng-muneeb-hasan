@@ -381,14 +381,16 @@ scenario("3.12", "#3", "edge", "The empty-state message shows with no tasks and 
   ok(visible($("#empty")), "empty-state message not back after deleting the last task");
 });
 
-scenario("3.13", "#3", "unclear", '"A simple interface" has no measurable acceptance criteria', async () =>
-  unclear('Ticket #3 asks for "a simple interface" without saying what counts as simple. Not scored; the screenshots in todo/screenshots show the UI for a human to judge.'));
+// Decision (27 Oct): interface simplicity is reviewed by a person, not scored here.
+scenario("3.13", "#3", "manual", 'The interface is simple (manual review)', async () =>
+  skip('Decided: reviewed by a person rather than automated. Check the screenshots in todo/screenshots against "a simple interface" (#3).'));
 
+// Decision (27 Oct): a storage failure must show the user a visible error.
 scenario(
   "3.14",
   "#3",
   "failure",
-  "Storage can't be opened (IndexedDB unavailable)",
+  "When storage can't be opened, the user sees a visible error and the task isn't shown as saved",
   async () => {
     unloadApp();
     await deleteDb();
@@ -407,14 +409,20 @@ scenario(
       await loadApp({ waitRender: false });
       $("#new-task-title").value = "Will this save?";
       $("#new-task").requestSubmit();
-      await waitFor(() => frameErrors.length > 0, "the storage error to surface");
-      const message = /error|could not|couldn't|failed|unavailable|storage/i.test(doc.body.innerText);
-      const shown = titles().includes("Will this save?");
-      return unclear(
-        `The tickets don't say what should happen. Observed: the task ${shown ? "is" : "is not"} shown, ` +
-          `${message ? "a" : "no"} message is shown to the user, and the page raised ${frameErrors.length} uncaught error(s) ` +
-          `(first: "${frameErrors[0]}"). PR #9 adds a visible storage-error message.`
-      );
+      await waitFor(() => frameErrors.length > 0, "the storage failure to happen");
+      const errorShown = () =>
+        $$('[role="alert"]').some((e) => !e.hidden && e.textContent.trim()) ||
+        /could not|couldn't|failed|unavailable|blocking storage/i.test(doc.body.innerText);
+      let visibleError = true;
+      try {
+        await waitFor(errorShown, "a visible error message", 2000);
+      } catch {
+        visibleError = false;
+      }
+      ok(!titles().includes("Will this save?"), "the unsaved task is shown as if it had been saved");
+      ok(visibleError, `no visible error is shown to the user (the page only raised ${frameErrors.length} uncaught error(s), first: "${frameErrors[0]}")`);
+      const text = $$('[role="alert"]').find((e) => !e.hidden)?.textContent.trim();
+      return { status: "PASS", detail: text ? `Shown: "${text}"` : "" };
     } finally {
       unloadApp();
       await deleteDb();
@@ -641,18 +649,19 @@ scenario("4.25", "#4", "edge", "A task saved before #4 (no due date or tags) sti
   eq((await dbAll())[0].tags, ["old"], "stored tags after edit");
 });
 
-scenario("4.26", "#4", "unclear", "Adding a task while a filter hides it", async () => {
+// Decision (27 Oct): adding a task leaves the chosen filters as they are.
+scenario("4.26", "#4", "edge", "Adding a task while a filter hides it saves the task and leaves the filters unchanged", async () => {
   await reset();
-  await add("Done one");
+  await add("Done one", { tags: "work" });
   await toggle("Done one");
   await showStatus("completed");
-  await add("New one");
-  const stored = byTitle(await dbAll(), "New one").length === 1;
-  const shown = titles().includes("New one");
-  return unclear(
-    `Not covered by #4's plan. Observed: the new task is ${stored ? "saved" : "NOT saved"} but ${shown ? "shown" : "not shown"} ` +
-      `while the Completed filter is on; only the counts change. Decide whether the filter should switch back to All or show a hint.`
-  );
+  await clickTagFilter("work");
+  await add("New one", { tags: "home" });
+  eq(byTitle(await dbAll(), "New one").length, 1, "stored copies of the new task");
+  eq(JSON.parse(localStorage.getItem(FILTERS_KEY)), { status: "completed", tag: "work" }, "saved filters");
+  eq($('[data-status="completed"]').getAttribute("aria-pressed"), "true", "Completed still pressed");
+  eq(titles(), ["Done one"], "list (the new task stays hidden by the filters)");
+  eq(countOf("all"), 2, "All count");
 });
 
 // ===== #5: recurring tasks =====
@@ -747,15 +756,13 @@ scenario("5.12", "#5", "requirement", "Deleting a completed occurrence removes o
   eq(left.map((t) => ({ done: t.done, dueDate: t.dueDate })), [{ done: false, dueDate: dayOffset(7) }], "remaining occurrences");
 });
 
-scenario("5.13", "#5", "unclear", "Deleting the only open occurrence of a series", async () => {
+// Decision (27 Oct): deleting the open occurrence ends the series.
+scenario("5.13", "#5", "requirement", "Deleting the only open occurrence ends the series (no next copy is created)", async () => {
   await reset();
   await add("Rent", { due: dayOffset(0), repeat: "monthly" });
   await remove("Rent");
-  const left = byTitle(await dbAll(), "Rent").length;
-  return unclear(
-    `#5 says deleting "deletes only that occurrence", but not whether the series continues. Observed: ${left} task(s) left, ` +
-      `so deleting the open occurrence ends the series with no next copy. Confirm that's intended.`
-  );
+  eq(byTitle(await dbAll(), "Rent").length, 0, "tasks titled 'Rent' after deleting");
+  eq(titles(), [], "list");
 });
 
 scenario("5.14", "#5", "persistence", "A completed occurrence, its new copy and the repeat are still there after a reload", async () => {
