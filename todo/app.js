@@ -1,15 +1,19 @@
-import { NAMESPACE, addTask, completeAndSpawn, deleteTask, getAllTasks, updateTask } from "./db.js";
+import { NAMESPACE, PRIORITIES, addTask, completeAndSpawn, deleteTask, getAllTasks, updateTask } from "./db.js";
 import { REPEATS, REPEAT_LABELS, dayOf, nextDueDate } from "./recurrence.js";
 
 const FILTERS_KEY = NAMESPACE ? `todo-filters-${NAMESPACE}` : "todo-filters";
 const STATUSES = ["all", "incomplete", "completed"];
+const PRIORITY_FILTERS = ["all", ...PRIORITIES];
+const PRIORITY_LABELS = { high: "High", medium: "Medium", low: "Low" };
 
 const form = document.querySelector("#new-task");
 const titleInput = document.querySelector("#new-task-title");
 const dueInput = document.querySelector("#new-task-due");
 const tagsInput = document.querySelector("#new-task-tags");
 const repeatInput = document.querySelector("#new-task-repeat");
+const priorityInput = document.querySelector("#new-task-priority");
 const statusFilter = document.querySelector("#status-filter");
+const priorityFilter = document.querySelector("#priority-filter");
 const tagFilter = document.querySelector("#tag-filter");
 const list = document.querySelector("#tasks");
 const empty = document.querySelector("#empty");
@@ -50,9 +54,12 @@ async function save(write) {
 function loadFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(FILTERS_KEY));
-    if (saved && STATUSES.includes(saved.status)) return { status: saved.status, tag: saved.tag || null };
+    if (saved && STATUSES.includes(saved.status)) {
+      const priority = PRIORITY_FILTERS.includes(saved.priority) ? saved.priority : "all";
+      return { status: saved.status, tag: saved.tag || null, priority };
+    }
   } catch {}
-  return { status: "all", tag: null };
+  return { status: "all", tag: null, priority: "all" };
 }
 
 function saveFilters() {
@@ -90,6 +97,7 @@ function formatDue(dueDate) {
 function matchesFilters(task) {
   if (filters.status === "incomplete" && task.done) return false;
   if (filters.status === "completed" && !task.done) return false;
+  if (filters.priority !== "all" && task.priority !== filters.priority) return false;
   return !filters.tag || task.tags.includes(filters.tag);
 }
 
@@ -112,7 +120,8 @@ async function setDone(task, done) {
     if (done && task.repeat !== "none" && !task.spawned) {
       const anchor = task.repeatDay || dayOf(task.dueDate);
       const dueDate = nextDueDate(task.dueDate, task.repeat, today(), anchor);
-      return completeAndSpawn(task, { title: task.title, tags: task.tags, repeat: task.repeat, repeatDay: anchor, dueDate });
+      const next = { title: task.title, tags: task.tags, repeat: task.repeat, repeatDay: anchor, priority: task.priority, dueDate };
+      return completeAndSpawn(task, next);
     }
     return updateTask({ ...task, done });
   });
@@ -120,8 +129,8 @@ async function setDone(task, done) {
   await render();
 }
 
-function repeatSelect(value, props) {
-  const select = el("select", props, REPEATS.map((r) => el("option", { value: r, textContent: REPEAT_LABELS[r] })));
+function choiceSelect(values, labels, value, props) {
+  const select = el("select", props, values.map((v) => el("option", { value: v, textContent: labels[v] })));
   select.value = value;
   return select;
 }
@@ -142,7 +151,9 @@ function renderTask(task) {
   checkbox.setAttribute("aria-label", `Mark "${task.title}" done`);
   checkbox.addEventListener("change", () => setDone(task, checkbox.checked));
 
-  const meta = el("div", { className: "meta" });
+  const meta = el("div", { className: "meta" }, [
+    el("span", { className: `priority priority-${task.priority}`, textContent: PRIORITY_LABELS[task.priority], title: "Priority" }),
+  ]);
   if (task.dueDate) {
     const due = el("span", { className: overdue ? "due overdue" : "due" });
     due.textContent = overdue ? `Overdue · ${formatDue(task.dueDate)}` : `Due ${formatDue(task.dueDate)}`;
@@ -153,8 +164,7 @@ function renderTask(task) {
   }
   for (const tag of task.tags) meta.append(tagChip(tag, () => setFilters({ tag })));
 
-  const body = el("div", { className: "body" }, [el("span", { className: "title", textContent: task.title })]);
-  if (meta.childElementCount) body.append(meta);
+  const body = el("div", { className: "body" }, [el("span", { className: "title", textContent: task.title }), meta]);
 
   const edit = el("button", { type: "button", className: "secondary edit", textContent: "Edit" });
   edit.setAttribute("aria-label", `Edit "${task.title}"`);
@@ -180,8 +190,10 @@ function renderEditor(task) {
   due.setAttribute("aria-label", "Due date");
   const tags = el("input", { type: "text", value: task.tags.join(", "), placeholder: "Tags, comma-separated", name: "tags", className: "edit-tags" });
   tags.setAttribute("aria-label", "Tags");
-  const repeat = repeatSelect(task.repeat, { name: "repeat", className: "edit-repeat" });
+  const repeat = choiceSelect(REPEATS, REPEAT_LABELS, task.repeat, { name: "repeat", className: "edit-repeat" });
   repeat.setAttribute("aria-label", "Repeat");
+  const priority = choiceSelect(PRIORITIES, PRIORITY_LABELS, task.priority, { name: "priority", className: "edit-priority" });
+  priority.setAttribute("aria-label", "Priority");
 
   const saveButton = el("button", { type: "submit", textContent: "Save" });
   const cancel = el("button", { type: "button", className: "secondary", textContent: "Cancel" });
@@ -191,7 +203,7 @@ function renderEditor(task) {
   };
   cancel.addEventListener("click", stopEditing);
 
-  const editor = el("form", { className: "editor" }, [title, due, repeat, tags, el("div", { className: "actions" }, [saveButton, cancel])]);
+  const editor = el("form", { className: "editor" }, [title, due, repeat, priority, tags, el("div", { className: "actions" }, [saveButton, cancel])]);
   editor.addEventListener("keydown", (event) => {
     if (event.key === "Escape") stopEditing();
   });
@@ -203,7 +215,7 @@ function renderEditor(task) {
       title.reportValidity();
       return;
     }
-    const fields = { title: newTitle, tags: parseTags(tags.value), ...schedule(due.value || null, repeat.value, task) };
+    const fields = { title: newTitle, tags: parseTags(tags.value), priority: priority.value, ...schedule(due.value || null, repeat.value, task) };
     // On failure the editor stays open with the new values, so Save can be pressed again.
     if (!(await save(() => updateTask({ ...task, ...fields })))) return;
     editingId = null;
@@ -224,6 +236,12 @@ function renderFilters(tasks) {
     const status = button.dataset.status;
     button.setAttribute("aria-pressed", String(filters.status === status));
     button.querySelector(".n").textContent = counts[status];
+  }
+
+  for (const button of priorityFilter.querySelectorAll("button")) {
+    const priority = button.dataset.priority;
+    button.setAttribute("aria-pressed", String(filters.priority === priority));
+    button.querySelector(".n").textContent = priority === "all" ? tasks.length : tasks.filter((t) => t.priority === priority).length;
   }
 
   const allTags = [...new Set(tasks.flatMap((t) => t.tags))].sort();
@@ -271,11 +289,16 @@ statusFilter.addEventListener("click", (event) => {
   if (button) setFilters({ status: button.dataset.status });
 });
 
+priorityFilter.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-priority]");
+  if (button) setFilters({ priority: button.dataset.priority });
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = titleInput.value.trim();
   if (!title) return;
-  const fields = { title, tags: parseTags(tagsInput.value), ...schedule(dueInput.value || null, repeatInput.value) };
+  const fields = { title, tags: parseTags(tagsInput.value), priority: priorityInput.value, ...schedule(dueInput.value || null, repeatInput.value) };
   // On failure the form keeps what was typed, so Add can be pressed again.
   if (!(await save(() => addTask(fields)))) return;
   form.reset();

@@ -66,7 +66,7 @@ Keep context small and load detail only when it's needed:
 
 | Folder | Ticket | Description |
 |---|---|---|
-| `todo/` | #3–#5 | Browser todo app: tasks with due dates, tags, filters and repeats, in IndexedDB |
+| `todo/` | #3–#5, #8 | Browser todo app: tasks with due dates, tags, repeats and priorities, with filters, in IndexedDB |
 
 ## Ground rules
 

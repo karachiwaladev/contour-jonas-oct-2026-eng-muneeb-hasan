@@ -7,6 +7,8 @@ const DB_NAME = NAMESPACE ? `todo-app-${NAMESPACE}` : "todo-app";
 const DB_VERSION = 1;
 const STORE = "tasks";
 
+export const PRIORITIES = ["high", "medium", "low"];
+
 let dbPromise;
 
 function openDb() {
@@ -38,7 +40,8 @@ async function run(mode, fn) {
   });
 }
 
-// Tasks saved before due dates, tags (#4) or repeats (#5) existed lack those fields.
+// Tasks saved before due dates, tags (#4), repeats (#5) or priority (#8) existed lack
+// those fields. A task without a known priority counts as medium.
 function normalize(task) {
   return {
     ...task,
@@ -47,11 +50,12 @@ function normalize(task) {
     repeat: task.repeat || "none",
     repeatDay: task.repeatDay || null,
     spawned: Boolean(task.spawned),
+    priority: PRIORITIES.includes(task.priority) ? task.priority : "medium",
   };
 }
 
-function newTask({ title, dueDate = null, tags = [], repeat = "none", repeatDay = null }) {
-  return { title, done: false, dueDate, tags, repeat, repeatDay, spawned: false, createdAt: Date.now() };
+function newTask({ title, dueDate = null, tags = [], repeat = "none", repeatDay = null, priority = "medium" }) {
+  return { title, done: false, dueDate, tags, repeat, repeatDay, priority, spawned: false, createdAt: Date.now() };
 }
 
 export async function getAllTasks() {
