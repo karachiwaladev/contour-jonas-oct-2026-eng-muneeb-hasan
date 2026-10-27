@@ -46,3 +46,5 @@
 {"timestamp": "2026-10-27T05:54:20.419Z", "session_id": "7a61b12d-6a4c-4625-9e6d-89bfa49daeba", "uuid": "62de5a69-be47-4708-b501-2ab4a62bff9a", "kind": "typed", "prompt": "do as per priority"}
 {"timestamp": "2026-10-27T06:28:22.061Z", "session_id": "08c8a9e5-3751-4f39-b482-a3e5dced3048", "uuid": "119b1115-527b-4a3f-81a2-df3b7bbfd87d", "kind": "command", "prompt": "/insights"}
 {"timestamp": "2026-10-27T06:28:27.252Z", "session_id": "08c8a9e5-3751-4f39-b482-a3e5dced3048", "uuid": "a4240ed4-4bf4-4051-9cf5-989b2853dd25", "kind": "command", "prompt": "/insights and then open it in chrome"}
+{"timestamp": "2026-10-27T06:41:33.846Z", "session_id": "7a61b12d-6a4c-4625-9e6d-89bfa49daeba", "uuid": "08a27bc6-830d-4d51-ac7c-f9c41664ac23", "kind": "typed", "prompt": "group them by cause"}
+{"timestamp": "2026-10-27T06:41:44.291Z", "session_id": "7a61b12d-6a4c-4625-9e6d-89bfa49daeba", "uuid": "3de7de9e-3bbe-4243-845a-4994d79f78d4", "kind": "typed", "prompt": "group them by cause the failed traces"}
