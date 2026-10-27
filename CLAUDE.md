@@ -54,7 +54,8 @@ Keep context small and load detail only when it's needed:
 |---|---|
 | `CLAUDE.md` | This index and the factory rules |
 | `.claude/skills/factory-loop/` | Skill that answers tickets, or asks, plans, builds, PRs and merges them |
-| `.claude/settings.json` | Stop hook: runs `prompt-log.sh`, then `auto-commit.sh` (branches only, never `main`) |
+| `.claude/settings.json` | Deny rules, PreToolUse guard, and Stop hook: runs `prompt-log.sh`, then `auto-commit.sh` (branches only, never `main`) |
+| `.claude/hooks/guard.py` | PreToolUse guard: blocks `rm -rf`, force pushes, `curl \| sh` and `.env` reads; tests in `test-guard.sh` |
 | `.claude/hooks/prompt-log.sh` | Logs typed prompts on the `prompt-log` branch, via a worktree at `.git/prompt-log` |
 | `.claude/hooks/secret-scan.sh` | Blocks staged files that look like secrets (names or token/key content) |
 | `.mcp.json` | `chrome-devtools-isolated` MCP server (own browser profile) for in-browser checks |
