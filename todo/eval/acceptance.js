@@ -1,4 +1,4 @@
-// Acceptance eval for the todo app, tickets #3–#5.
+// Acceptance eval for the todo app, tickets #3–#5 and #8.
 // Each scenario comes from a ticket requirement or the plan agreed on that ticket. It drives the
 // real app (../index.html) in an iframe, checks what is shown, and reads IndexedDB directly to
 // check what was stored. "Reload" means loading a fresh copy of the app against the same storage.
@@ -10,6 +10,11 @@ const STORE = "tasks";
 const FILTERS_KEY = "todo-filters";
 const TIMEOUT_MS = 4000;
 const TICKET_URL = "https://github.com/karachiwaladev/contour-jonas-oct-2026-eng-muneeb-hasan/issues/";
+
+// #8: three levels, Medium by default. A stored task without a known priority counts as Medium.
+const PRIORITIES = ["high", "medium", "low"];
+const PRIORITY_LABELS = { high: "High", medium: "Medium", low: "Low" };
+const priorityOf = (task) => (PRIORITIES.includes(task.priority) ? task.priority : "medium");
 
 // ---------- assertions ----------
 
@@ -137,6 +142,9 @@ const rows = () => $$("#tasks > li");
 const titles = () => $$("#tasks .title").map((e) => e.textContent);
 const rowOf = (title) => rows().find((li) => li.querySelector(".title")?.textContent === title);
 const countOf = (status) => Number($(`#status-filter [data-status="${status}"] .n`).textContent);
+const priorityButton = (p) => $(`#priority-filter [data-priority="${p}"]`);
+const priorityCount = (p) => Number(priorityButton(p).querySelector(".n").textContent);
+const badgeOf = (title) => needRow(title).querySelector(".priority")?.textContent;
 const tagRow = () => $$("#tag-filter .tag").map((c) => c.textContent);
 const visible = (node) => !node.hidden;
 
@@ -161,30 +169,49 @@ async function loadApp({ waitRender = true } = {}) {
 }
 
 // The page is settled when what it shows matches what's stored: the counts, the tag chips, the
-// pressed filters, and one row per visible task with the right title and done state. This is the
-// expected behaviour from #3–#5 written independently of the app, so it doubles as an oracle: if
-// the app filters or renders wrongly the wait times out and the scenario fails.
+// pressed filters, and one row per visible task with the right title, done state and priority
+// badge. This is the expected behaviour from #3–#5 and #8 written independently of the app, so it
+// doubles as an oracle: if the app filters or renders wrongly the wait times out and the scenario
+// fails.
 async function shownMatchesStored() {
   const tasks = (await dbAll()).sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
-  let f = { status: "all", tag: null };
+  let f = { status: "all", tag: null, priority: "all" };
   try {
     const saved = JSON.parse(localStorage.getItem(FILTERS_KEY));
-    if (saved && ["all", "incomplete", "completed"].includes(saved.status)) f = { status: saved.status, tag: saved.tag || null };
+    if (saved && ["all", "incomplete", "completed"].includes(saved.status)) {
+      // #8: a missing or unknown saved priority falls back to All.
+      f = { status: saved.status, tag: saved.tag || null, priority: ["all", ...PRIORITIES].includes(saved.priority) ? saved.priority : "all" };
+    }
   } catch {}
   const allTags = [...new Set(tasks.flatMap((t) => t.tags || []))].sort();
   if (f.tag && !allTags.includes(f.tag)) f.tag = null;
-  const shown = tasks.filter((t) => (f.status === "all" || (f.status === "completed") === Boolean(t.done)) && (!f.tag || (t.tags || []).includes(f.tag)));
+  const shown = tasks.filter(
+    (t) =>
+      (f.status === "all" || (f.status === "completed") === Boolean(t.done)) &&
+      (!f.tag || (t.tags || []).includes(f.tag)) &&
+      (f.priority === "all" || priorityOf(t) === f.priority)
+  );
 
   if (countOf("all") !== tasks.length) return false;
   if ($(`#status-filter [data-status="${f.status}"]`).getAttribute("aria-pressed") !== "true") return false;
   if (JSON.stringify(tagRow()) !== JSON.stringify(allTags)) return false;
   if (JSON.stringify($$('#tag-filter .tag[aria-pressed="true"]').map((c) => c.textContent)) !== JSON.stringify(f.tag ? [f.tag] : [])) return false;
+  if (priorityButton(f.priority).getAttribute("aria-pressed") !== "true") return false;
+  if ($$('#priority-filter [aria-pressed="true"]').length !== 1) return false;
+  // Each priority button counts every task at that priority, whatever its status (#8 plan).
+  if (priorityCount("all") !== tasks.length) return false;
+  if (PRIORITIES.some((p) => priorityCount(p) !== tasks.filter((t) => priorityOf(t) === p).length)) return false;
   const list = rows();
   if (list.length !== shown.length) return false;
   return list.every((li, i) => {
     if (li.classList.contains("editing")) return true;
     const t = shown[i];
-    return li.querySelector(".title")?.textContent === t.title && li.classList.contains("done") === Boolean(t.done) && li.querySelector('input[type="checkbox"]').checked === Boolean(t.done);
+    return (
+      li.querySelector(".title")?.textContent === t.title &&
+      li.classList.contains("done") === Boolean(t.done) &&
+      li.querySelector('input[type="checkbox"]').checked === Boolean(t.done) &&
+      li.querySelector(".priority")?.textContent === PRIORITY_LABELS[priorityOf(t)]
+    );
   });
 }
 
@@ -206,12 +233,14 @@ async function act(fn, what, until = () => true) {
   await waitFor(async () => (await until()) && (await shownMatchesStored()), `the page to settle after ${what}`);
 }
 
-async function add(title, { due = "", tags = "", repeat = "none" } = {}) {
+// Leaving out `priority` keeps whatever the form shows, so the default can be checked.
+async function add(title, { due = "", tags = "", repeat = "none", priority } = {}) {
   const before = (await dbAll()).length;
   $("#new-task-title").value = title;
   $("#new-task-due").value = due;
   $("#new-task-tags").value = tags;
   $("#new-task-repeat").value = repeat;
+  if (priority) $("#new-task-priority").value = priority;
   await act(() => $("#new-task").requestSubmit(), `adding "${title}"`, async () => (await dbAll()).length === before + 1);
 }
 
@@ -233,6 +262,7 @@ async function removeRow(row, what) {
 }
 const remove = (title) => removeRow(needRow(title), `deleting "${title}"`);
 const showStatus = (status) => act(() => $(`#status-filter [data-status="${status}"]`).click(), `choosing ${status}`);
+const showPriority = (p) => act(() => priorityButton(p).click(), `choosing the ${p} priority filter`);
 function clickTagFilter(tag) {
   const chip = $$("#tag-filter .tag").find((c) => c.textContent === tag);
   ok(chip, `tag filter chip "${tag}" not shown (shown: ${JSON.stringify(tagRow())})`);
@@ -249,7 +279,7 @@ async function openEditor(title) {
 
 async function edit(title, changes) {
   const editor = await openEditor(title);
-  const field = { title: ".edit-title", due: ".edit-due", tags: ".edit-tags", repeat: ".edit-repeat" };
+  const field = { title: ".edit-title", due: ".edit-due", tags: ".edit-tags", repeat: ".edit-repeat", priority: ".edit-priority" };
   for (const [key, value] of Object.entries(changes)) editor.querySelector(field[key]).value = value;
   await act(() => editor.requestSubmit(), `saving "${title}"`, editorClosed);
 }
@@ -807,6 +837,188 @@ scenario("5.17", "#5", "edge", "Tasks saved before #5 are non-recurring: no badg
   ok(!needRow("Old").querySelector(".repeat"), "legacy task shows a repeat badge");
   await toggle("Old");
   eq(byTitle(await dbAll(), "Old").length, 1, "tasks after ticking");
+});
+
+// ===== #8: task priority =====
+// #8 asks for a priority on each task, in the filters and in add and edit. Its details come from the
+// approved plan (all eight defaults): High / Medium / Low, Medium by default, a badge on each task,
+// a priority filter combined with status and tag and remembered after a reload, recurring copies
+// keep the priority, tasks saved before #8 count as Medium, and the list is not sorted by priority.
+
+const storedPriority = async (title) => byTitle(await dbAll(), title).map((t) => t.priority);
+
+scenario("8.1", "#8", "requirement", "The add and edit forms both offer High / Medium / Low, and the add form starts at Medium", async () => {
+  await reset();
+  eq([...$("#new-task-priority").options].map((o) => o.value), PRIORITIES, "add form options");
+  eq($("#new-task-priority").value, "medium", "add form's starting value");
+  await add("A");
+  const editor = await openEditor("A");
+  eq([...editor.querySelector(".edit-priority").options].map((o) => o.value), PRIORITIES, "edit form options");
+});
+
+scenario("8.2", "#8", "requirement", "A task added without choosing a priority is saved and shown as Medium", async () => {
+  await reset();
+  await add("Default");
+  eq(await storedPriority("Default"), ["medium"], "stored priority");
+  eq(badgeOf("Default"), "Medium", "badge");
+});
+
+scenario("8.3", "#8", "requirement", "Adding at High or Low saves and shows that priority, and the form goes back to Medium", async () => {
+  await reset();
+  await add("Urgent", { priority: "high" });
+  eq($("#new-task-priority").value, "medium", "add form after adding");
+  await add("Someday", { priority: "low" });
+  eq([...(await storedPriority("Urgent")), ...(await storedPriority("Someday"))], ["high", "low"], "stored priorities");
+  eq([badgeOf("Urgent"), badgeOf("Someday")], ["High", "Low"], "badges");
+});
+
+scenario("8.4", "#8", "requirement", "Badges are coloured by priority: High red, Medium amber, Low grey", async () => {
+  await reset();
+  await add("H", { priority: "high" });
+  await add("M");
+  await add("L", { priority: "low" });
+  const rgb = (title) => frame.contentWindow.getComputedStyle(needRow(title).querySelector(".priority")).color.match(/\d+/g).slice(0, 3).map(Number);
+  const [h, m, l] = [rgb("H"), rgb("M"), rgb("L")];
+  ok(h[0] > h[1] + 60 && h[0] > h[2] + 60, `High badge isn't red: rgb(${h})`);
+  ok(m[0] > m[2] + 60 && m[1] > m[2] + 40, `Medium badge isn't amber: rgb(${m})`);
+  ok(Math.max(...l) - Math.min(...l) < 40, `Low badge isn't grey: rgb(${l})`);
+});
+
+scenario("8.5", "#8", "requirement", "Editing a task changes its priority", async () => {
+  await reset();
+  await add("Report", { priority: "low" });
+  const editor = await openEditor("Report");
+  eq(editor.querySelector(".edit-priority").value, "low", "editor's starting value");
+  await act(() => {
+    editor.querySelector(".edit-priority").value = "high";
+    editor.requestSubmit();
+  }, "saving the new priority", editorClosed);
+  eq(await storedPriority("Report"), ["high"], "stored priority");
+  eq(badgeOf("Report"), "High", "badge");
+});
+
+scenario("8.6", "#8", "persistence", "A priority set when adding, and one changed in the editor, are still there after a reload", async () => {
+  await reset();
+  await add("Errand", { priority: "high" });
+  await add("Report", { priority: "low" });
+  await edit("Report", { priority: "medium" });
+  await reload();
+  eq([badgeOf("Errand"), badgeOf("Report")], ["High", "Medium"], "badges after reload");
+});
+
+scenario("8.7", "#8", "edge", "Escape and Cancel discard a priority change", async () => {
+  await reset();
+  await add("Pay bills", { priority: "high" });
+  let editor = await openEditor("Pay bills");
+  editor.querySelector(".edit-priority").value = "low";
+  await act(() => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), "pressing Escape", editorClosed);
+  editor = await openEditor("Pay bills");
+  editor.querySelector(".edit-priority").value = "medium";
+  await act(() => editor.querySelector("button.secondary").click(), "clicking Cancel", editorClosed);
+  eq(await storedPriority("Pay bills"), ["high"], "stored priority");
+  await reload();
+  eq(badgeOf("Pay bills"), "High", "badge after reload");
+});
+
+async function priorityTasks() {
+  await reset();
+  await add("Fix bug", { tags: "work", priority: "high" });
+  await add("Ship release", { tags: "work", priority: "high" });
+  await add("Tidy desk", { tags: "work", priority: "low" });
+  await add("Book dentist", { tags: "home", priority: "high" });
+  await add("Read book", { tags: "home" });
+  await toggle("Ship release");
+}
+
+scenario("8.8", "#8", "requirement", "The priority filter shows only tasks at that priority, with a count of every task at each level", async () => {
+  await priorityTasks();
+  eq(PRIORITIES.map(priorityCount), [3, 1, 1], "High / Medium / Low counts (all statuses)");
+  await showPriority("high");
+  eq(titles(), ["Fix bug", "Ship release", "Book dentist"], "list with High");
+  await showPriority("low");
+  eq(titles(), ["Tidy desk"], "list with Low");
+  await showPriority("all");
+  eq(titles().length, 5, "tasks with All");
+});
+
+scenario("8.9", "#8", "requirement", "The priority filter combines with the status and tag filters", async () => {
+  await priorityTasks();
+  await showPriority("high");
+  await showStatus("incomplete");
+  await clickTagFilter("work");
+  eq(titles(), ["Fix bug"], "Incomplete + work + High");
+  await showStatus("completed");
+  eq(titles(), ["Ship release"], "Completed + work + High");
+});
+
+scenario("8.10", "#8", "persistence", "The chosen priority filter is remembered after a reload, with the other filters", async () => {
+  await priorityTasks();
+  await showPriority("high");
+  await showStatus("incomplete");
+  await clickTagFilter("home");
+  await reload();
+  eq(priorityButton("high").getAttribute("aria-pressed"), "true", "High still pressed");
+  eq(titles(), ["Book dentist"], "list after reload");
+});
+
+scenario("8.11", "#8", "edge", 'When the priority filter hides every task, it says "No tasks match these filters."', async () => {
+  await reset();
+  await add("Only high", { priority: "high" });
+  await showPriority("low");
+  eq(titles(), [], "list");
+  ok(visible($("#empty")) && $("#empty").textContent === "No tasks match these filters.", `empty message: "${$("#empty").textContent}"`);
+});
+
+// Same decision as 4.26 (27 Oct): adding a task leaves the chosen filters as they are.
+scenario("8.12", "#8", "edge", "Adding a task the priority filter hides saves it and leaves the filter unchanged", async () => {
+  await reset();
+  await add("Urgent", { priority: "high" });
+  await showPriority("high");
+  await add("Later", { priority: "low" });
+  eq(await storedPriority("Later"), ["low"], "stored priority of the new task");
+  eq(priorityButton("high").getAttribute("aria-pressed"), "true", "High still pressed");
+  eq(titles(), ["Urgent"], "list");
+});
+
+scenario("8.13", "#8", "requirement", "Ticking a recurring task gives the next occurrence the same priority", async () => {
+  await reset();
+  await add("Weekly review", { due: dayOffset(0), repeat: "weekly", priority: "high" });
+  await toggle("Weekly review");
+  const tasks = byTitle(await dbAll(), "Weekly review");
+  eq(tasks.map((t) => ({ done: t.done, dueDate: t.dueDate, priority: t.priority })),
+    [{ done: true, dueDate: dayOffset(0), priority: "high" }, { done: false, dueDate: dayOffset(7), priority: "high" }], "occurrences");
+});
+
+scenario("8.14", "#8", "edge", "Tasks saved before #8 count as Medium: badge, counts, filter and editor", async () => {
+  await reset({ seed: [{ title: "Old", done: false, dueDate: null, tags: [], repeat: "none" }] });
+  eq(badgeOf("Old"), "Medium", "badge");
+  eq(PRIORITIES.map(priorityCount), [0, 1, 0], "High / Medium / Low counts");
+  await showPriority("medium");
+  eq(titles(), ["Old"], "list with Medium");
+  await showPriority("all");
+  const editor = await openEditor("Old");
+  eq(editor.querySelector(".edit-priority").value, "medium", "editor value");
+  await act(() => editor.requestSubmit(), "saving without changes", editorClosed);
+  eq(await storedPriority("Old"), ["medium"], "stored priority after saving");
+});
+
+scenario("8.15", "#8", "failure", "A missing or unknown saved priority filter falls back to All, keeping the other filters", async () => {
+  await reset({ filters: { status: "all", tag: null, priority: "urgent" } });
+  await add("Low one", { priority: "low" });
+  eq(priorityButton("all").getAttribute("aria-pressed"), "true", "All pressed (unknown value)");
+  localStorage.setItem(FILTERS_KEY, JSON.stringify({ status: "incomplete", tag: null }));
+  await reload();
+  eq(priorityButton("all").getAttribute("aria-pressed"), "true", "All pressed (filters saved before #8)");
+  eq($('[data-status="incomplete"]').getAttribute("aria-pressed"), "true", "Incomplete kept");
+  eq(titles(), ["Low one"], "list");
+});
+
+scenario("8.16", "#8", "requirement", "The list stays oldest first: priority doesn't change the order", async () => {
+  await reset();
+  await add("First", { priority: "low" });
+  await add("Second");
+  await add("Third", { priority: "high" });
+  eq(titles(), ["First", "Second", "Third"], "order");
 });
 
 // ---------- runner and report ----------
