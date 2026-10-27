@@ -82,6 +82,17 @@ button.secondary {
 
 button.delete { color: var(--danger); }
 
+#error {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 14px;
+}
+#error[hidden] { display: none; }
+
 /* Filters */
 #filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
 #status-filter { display: inline-flex; align-self: flex-start; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }

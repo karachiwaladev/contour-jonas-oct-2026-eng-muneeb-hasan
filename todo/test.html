@@ -4,225 +4,517 @@
 <pre id="out">running</pre>
 <script type="module">
 import { nextDueDate } from "./recurrence.js";
-// Drives index.html in an iframe. Wipes the todo-app database and saved filters first.
+
+// Drives index.html in an iframe, opened as index.html?ns=test so it uses its own
+// database ("todo-app-test") and saved filters. Your real tasks are never touched.
+//
+// Each test starts from an empty database and a fresh page, and reports its checks on
+// its own, so one failure can't hide or cause another. Tests wait for the app to finish
+// rendering (it counts renders in <body data-renders>) instead of sleeping.
+
+const NS = "test";
+const DB_NAME = `todo-app-${NS}`;
+const FILTERS_KEY = `todo-filters-${NS}`;
+const TIMEOUT_MS = 3000;
+
 const out = document.querySelector("#out");
 const log = [];
-const check = (name, ok, detail = "") => log.push(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " :: " + detail : ""}`);
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const tests = [];
+let current = "";
 
+// openApp: false for tests that don't need the app, or that set up the database first.
+const test = (name, fn, { openApp = true } = {}) => tests.push({ name, fn, openApp });
+const check = (name, ok, detail = "") => log.push(`${ok ? "PASS" : "FAIL"} ${current} › ${name}${detail ? " :: " + detail : ""}`);
+
+// --- dates ---
 function ymd(offsetDays) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-
-function loadFrame() {
-  document.querySelector("iframe")?.remove();
-  return new Promise((resolve) => {
-    const f = document.createElement("iframe");
-    f.src = "index.html";
-    f.style.width = "720px";
-    f.style.height = "600px";
-    f.onload = async () => { await wait(300); resolve(f.contentDocument); };
-    document.body.append(f);
-  });
+function label(date) {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-function seedLegacyTask() {
-  // A task saved by the #3 version of the app, without dueDate or tags.
+// --- waiting ---
+async function waitFor(condition, what) {
+  const start = performance.now();
+  while (performance.now() - start < TIMEOUT_MS) {
+    try {
+      const value = condition();
+      if (value) return value;
+    } catch {}
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`timed out after ${TIMEOUT_MS} ms waiting for ${what}`);
+}
+
+// --- the app under test ---
+let frame = null;
+let doc = null;
+const win = () => frame.contentWindow;
+const $ = (s) => doc.querySelector(s);
+const $$ = (s) => [...doc.querySelectorAll(s)];
+const renders = () => Number(doc?.body?.dataset.renders || 0);
+const titles = () => $$(".task .title").map((t) => t.textContent);
+const row = (title) => $$(".task").find((li) => li.querySelector(".title")?.textContent === title);
+const rows = (title) => $$(".task").filter((li) => li.querySelector(".title")?.textContent === title);
+const tagsOf = (li) => [...li.querySelectorAll(".tag")].map((t) => t.textContent);
+const statusBtn = (s) => $(`#status-filter [data-status="${s}"]`);
+const filterTag = (name) => [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === name);
+const errorShown = () => !$("#error").hidden && $("#error").textContent.length > 0;
+
+// Opens (or reopens) the app. Reopening is how the tests check what was really saved.
+async function open({ expectRender = true } = {}) {
+  frame?.remove();
+  frame = document.createElement("iframe");
+  frame.src = `index.html?ns=${NS}`;
+  frame.style.width = "720px";
+  frame.style.height = "600px";
+  await new Promise((resolve) => {
+    frame.onload = resolve;
+    document.body.append(frame);
+  });
+  doc = frame.contentDocument;
+  if (expectRender) await waitFor(() => renders() > 0, "the app's first render");
+}
+
+// Runs an action and waits until the app has rendered its result.
+async function act(action, what) {
+  const before = renders();
+  action();
+  await waitFor(() => renders() > before, what);
+}
+
+function fill({ title = "", due = "", tags = "", repeat = "none" }) {
+  $("#new-task-title").value = title;
+  $("#new-task-due").value = due;
+  $("#new-task-tags").value = tags;
+  $("#new-task-repeat").value = repeat;
+}
+
+async function add(title, options = {}) {
+  fill({ title, ...options });
+  await act(() => $("#new-task").requestSubmit(), `"${title}" to be added`);
+}
+
+const tick = (title) => act(() => row(title).querySelector("input[type=checkbox]").click(), `"${title}" to toggle`);
+
+async function edit(title, changes, { submit = true } = {}) {
+  await act(() => row(title).querySelector(".edit").click(), `the editor for "${title}"`);
+  const editor = $(".task.editing form");
+  for (const [field, value] of Object.entries(changes)) editor.querySelector(`.edit-${field}`).value = value;
+  if (submit) await act(() => editor.requestSubmit(), `the edit to "${title}" to save`);
+  return editor;
+}
+
+// Makes one storage method fail inside the app's page until the page is reloaded.
+// By default it throws at once; `failure` can instead make the database reject the write.
+function breakStorage(method, failure = () => { throw new DOMException("Simulated storage failure", "QuotaExceededError"); }) {
+  const proto = win().IDBObjectStore.prototype;
+  const original = proto[method];
+  proto[method] = function (...args) { return failure.call(this, original, args); };
+  return () => { proto[method] = original; };
+}
+
+// --- database helpers (this page shares the app's origin, so it can reach its database) ---
+function deleteDb() {
   return new Promise((resolve, reject) => {
-    const open = indexedDB.open("todo-app", 1);
-    open.onupgradeneeded = () => open.result.createObjectStore("tasks", { keyPath: "id", autoIncrement: true }).createIndex("createdAt", "createdAt");
-    open.onsuccess = () => {
-      const tx = open.result.transaction("tasks", "readwrite");
-      tx.objectStore("tasks").add({ title: "Legacy task", done: false, createdAt: 1 });
-      tx.oncomplete = () => { open.result.close(); resolve(); };
-      tx.onerror = () => reject(tx.error);
-    };
-    open.onerror = () => reject(open.error);
+    const request = indexedDB.deleteDatabase(DB_NAME);
+    request.onsuccess = resolve;
+    request.onerror = () => reject(request.error);
   });
 }
 
-try {
-  // --- #5 recurrence date maths (pure functions) ---
-  const nd = (...a) => nextDueDate(...a);
+function createDb(version) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, version);
+    request.onupgradeneeded = () => request.result.createObjectStore("tasks", { keyPath: "id", autoIncrement: true }).createIndex("createdAt", "createdAt");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+// A task saved by the #3 version of the app, without due date, tags or repeat.
+async function seedLegacyTask() {
+  const db = await createDb(1);
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction("tasks", "readwrite");
+    tx.objectStore("tasks").add({ title: "Legacy task", done: false, createdAt: 1 });
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function reset() {
+  frame?.remove();
+  frame = doc = null;
+  await deleteDb();
+  localStorage.removeItem(FILTERS_KEY);
+}
+
+// ======================================================================
+// Recurrence date maths (pure functions, #5)
+// ======================================================================
+
+test("recurrence: next due dates", async () => {
   const cases = [
-    ["daily: next day", nd("2026-10-26", "daily", "2026-10-26"), "2026-10-27"],
-    ["daily: across month end", nd("2026-10-31", "daily", "2026-10-31"), "2026-11-01"],
-    ["daily: overdue skips ahead to today", nd("2026-10-01", "daily", "2026-10-26"), "2026-10-26"],
-    ["weekly: +7 days", nd("2026-10-26", "weekly", "2026-10-26"), "2026-11-02"],
-    ["weekly: overdue keeps weekday", nd("2026-10-01", "weekly", "2026-10-26"), "2026-10-29"],
-    ["monthly: Dec -> Jan", nd("2026-12-15", "monthly", "2026-12-15"), "2027-01-15"],
-    ["monthly: 31 Jan -> 28 Feb", nd("2026-01-31", "monthly", "2026-01-31"), "2026-02-28"],
-    ["monthly: back to 31 Mar via anchor", nd("2026-02-28", "monthly", "2026-02-28", 31), "2026-03-31"],
-    ["monthly: 31 Jan -> 29 Feb in a leap year", nd("2028-01-31", "monthly", "2028-01-31"), "2028-02-29"],
-    ["yearly: 29 Feb -> 28 Feb", nd("2028-02-29", "yearly", "2028-02-29"), "2029-02-28"],
-    ["yearly: back to 29 Feb in a leap year", nd("2031-02-28", "yearly", "2031-02-28", 29), "2032-02-29"],
-    ["early completion keeps the schedule", nd("2026-11-10", "weekly", "2026-10-26"), "2026-11-17"],
+    ["daily: next day", ["2026-10-26", "daily", "2026-10-26"], "2026-10-27"],
+    ["daily: across month end", ["2026-10-31", "daily", "2026-10-31"], "2026-11-01"],
+    ["daily: overdue skips ahead to today", ["2026-10-01", "daily", "2026-10-26"], "2026-10-26"],
+    ["weekly: +7 days", ["2026-10-26", "weekly", "2026-10-26"], "2026-11-02"],
+    ["weekly: overdue keeps weekday", ["2026-10-01", "weekly", "2026-10-26"], "2026-10-29"],
+    ["monthly: Dec -> Jan", ["2026-12-15", "monthly", "2026-12-15"], "2027-01-15"],
+    ["monthly: 31 Jan -> 28 Feb", ["2026-01-31", "monthly", "2026-01-31"], "2026-02-28"],
+    ["monthly: back to 31 Mar via anchor", ["2026-02-28", "monthly", "2026-02-28", 31], "2026-03-31"],
+    ["monthly: 31 Jan -> 29 Feb in a leap year", ["2028-01-31", "monthly", "2028-01-31"], "2028-02-29"],
+    ["yearly: 29 Feb -> 28 Feb", ["2028-02-29", "yearly", "2028-02-29"], "2029-02-28"],
+    ["yearly: back to 29 Feb in a leap year", ["2031-02-28", "yearly", "2031-02-28", 29], "2032-02-29"],
+    ["early completion keeps the schedule", ["2026-11-10", "weekly", "2026-10-26"], "2026-11-17"],
   ];
-  for (const [name, got, want] of cases) check(name, got === want, got);
-  let unknownRepeat = "no error";
-  try { nd("2026-10-26", "fortnightly", "2026-10-26"); } catch (e) { unknownRepeat = e.message; }
-  check("unknown repeat type throws", unknownRepeat === "Unknown repeat: fortnightly", unknownRepeat);
+  for (const [name, args, want] of cases) {
+    const got = nextDueDate(...args);
+    check(name, got === want, got);
+  }
+  let error = "no error";
+  try { nextDueDate("2026-10-26", "fortnightly", "2026-10-26"); } catch (e) { error = e.message; }
+  check("unknown repeat type throws", error === "Unknown repeat: fortnightly", error);
+}, { openApp: false });
 
-  await new Promise((r) => { const q = indexedDB.deleteDatabase("todo-app"); q.onsuccess = q.onerror = q.onblocked = r; });
-  localStorage.removeItem("todo-filters");
+// ======================================================================
+// Basics (#3)
+// ======================================================================
 
-  // --- #3 basics ---
-  let doc = await loadFrame();
-  const $ = (s) => doc.querySelector(s);
-  const $$ = (s) => [...doc.querySelectorAll(s)];
-  check("empty state shown", !$("#empty").hidden);
+test("add, complete and delete", async () => {
+  check("empty state shown", !$("#empty").hidden && $("#empty").textContent === "No tasks yet. Add one above.");
 
-  const add = async (title, due = "", tags = "", repeat = "none") => {
-    $("#new-task-title").value = title;
-    $("#new-task-due").value = due;
-    $("#new-task-tags").value = tags;
-    $("#new-task-repeat").value = repeat;
-    $("#new-task").requestSubmit();
-    await wait(200);
-  };
-  await add("   ");
   await add("Buy milk");
   await add("  Write <b>report</b>  ");
-  let items = $$(".task");
-  check("two tasks added, blank ignored", items.length === 2, String(items.length));
-  check("titles trimmed and not parsed as HTML", items[1].querySelector(".title").textContent === "Write <b>report</b>" && !items[1].querySelector("b"));
+  check("two tasks added", titles().length === 2, JSON.stringify(titles()));
+  check("titles trimmed and not parsed as HTML", row("Write <b>report</b>") && !$(".task .title b"));
   check("form cleared after add", $("#new-task-title").value === "" && $("#new-task-tags").value === "" && $("#new-task-due").value === "");
   check("count", $("#count").textContent === "2 of 2 left", $("#count").textContent);
 
-  items[0].querySelector("input[type=checkbox]").click();
-  await wait(200);
-  check("mark done", $$(".task")[0].classList.contains("done"));
-  $$(".task")[1].querySelector(".delete").click();
-  await wait(200);
-  check("delete", $$(".task").length === 1);
+  await tick("Buy milk");
+  check("mark done", row("Buy milk").classList.contains("done") && row("Buy milk").querySelector("input").checked);
+  check("count after done", $("#count").textContent === "1 of 2 left", $("#count").textContent);
 
-  // --- #4 due dates and tags ---
-  await add("File taxes", ymd(-2), "Finance, URGENT, finance");
-  await add("Plan trip", ymd(5), "travel");
-  await add("Call mom", ymd(0), "");
-  items = $$(".task");
-  const taxes = items.find((li) => li.querySelector(".title").textContent === "File taxes");
-  const tags = [...taxes.querySelectorAll(".tag")].map((t) => t.textContent);
-  check("tags trimmed, lowercased, de-duplicated", JSON.stringify(tags) === '["finance","urgent"]', JSON.stringify(tags));
-  check("past due incomplete task is overdue", taxes.classList.contains("overdue") && taxes.querySelector(".due.overdue"));
-  const callMom = items.find((li) => li.querySelector(".title").textContent === "Call mom");
-  check("due today is not overdue", !callMom.classList.contains("overdue") && callMom.querySelector(".due"));
-  check("no-due task shows no badge", !items.find((li) => li.querySelector(".title").textContent === "Buy milk").querySelector(".due"));
+  await act(() => row("Write <b>report</b>").querySelector(".delete").click(), "the delete");
+  check("delete removes the task", JSON.stringify(titles()) === '["Buy milk"]', JSON.stringify(titles()));
+});
+
+test("blank titles are not added", async () => {
+  fill({ title: "    " });
+  $("#new-task").requestSubmit();
+  // A blank title causes no render, so reopen the app to check nothing was saved.
+  await open();
+  check("nothing saved", titles().length === 0 && !$("#empty").hidden, JSON.stringify(titles()));
+});
+
+test("changes survive a reload", async () => {
+  await add("Keep me", { due: ymd(3), tags: "home" });
+  await add("Finish me");
+  await add("Rename me", { tags: "work" });
+  await add("Delete me");
+  await tick("Finish me");
+  await edit("Rename me", { title: "Renamed", tags: "work, urgent", due: ymd(-1) });
+  await act(() => row("Delete me").querySelector(".delete").click(), "the delete");
+
+  await open();
+  check("same tasks after reload, in order", JSON.stringify(titles()) === '["Keep me","Finish me","Renamed"]', JSON.stringify(titles()));
+  check("old title and deleted task are gone", !row("Rename me") && !row("Delete me"));
+  check("completed state saved", row("Finish me").classList.contains("done") && row("Finish me").querySelector("input").checked);
+  check("edited tags and due date saved", JSON.stringify(tagsOf(row("Renamed"))) === '["work","urgent"]' && row("Renamed").classList.contains("overdue"),
+    JSON.stringify(tagsOf(row("Renamed"))));
+  check("untouched task kept its due date and tags", row("Keep me").querySelector(".due").textContent === `Due ${label(ymd(3))}` &&
+    JSON.stringify(tagsOf(row("Keep me"))) === '["home"]');
+});
+
+test("legacy task without due date, tags or repeat still loads", async () => {
+  await seedLegacyTask();
+  await open();
+  check("legacy task renders", JSON.stringify(titles()) === '["Legacy task"]' && !$(".task .due") && !$(".task .tag") && !$(".task .repeat"), JSON.stringify(titles()));
+}, { openApp: false });
+
+// ======================================================================
+// Due dates, tags and filters (#4)
+// ======================================================================
+
+async function seedFilterTasks() {
+  await add("Buy milk");
+  await add("File taxes", { due: ymd(-2), tags: "Finance, URGENT, finance" });
+  await add("Plan trip", { due: ymd(5), tags: "travel" });
+  await add("Call mom", { due: ymd(0) });
+  await tick("Buy milk");
+}
+
+test("due dates and tags", async () => {
+  await seedFilterTasks();
+  check("tags trimmed, lowercased, de-duplicated", JSON.stringify(tagsOf(row("File taxes"))) === '["finance","urgent"]', JSON.stringify(tagsOf(row("File taxes"))));
+  check("past due incomplete task is overdue", row("File taxes").classList.contains("overdue") && row("File taxes").querySelector(".due.overdue"));
+  check("due today is not overdue", !row("Call mom").classList.contains("overdue") && row("Call mom").querySelector(".due").textContent === `Due ${label(ymd(0))}`);
+  check("no-due task shows no badge", !row("Buy milk").querySelector(".due"));
   check("tag filter lists tags in use", JSON.stringify([...$("#tag-filter").querySelectorAll(".tag")].map((t) => t.textContent)) === '["finance","travel","urgent"]');
+  await tick("File taxes");
+  check("done task is not overdue", !row("File taxes").classList.contains("overdue"));
+});
 
-  // --- status filters ---
-  const statusBtn = (s) => $(`#status-filter [data-status="${s}"]`);
-  const titles = () => $$(".task .title").map((t) => t.textContent);
+test("status and tag filters", async () => {
+  await seedFilterTasks();
   check("status counts", statusBtn("all").textContent.includes("4") && statusBtn("incomplete").textContent.includes("3") && statusBtn("completed").textContent.includes("1"),
     ["all", "incomplete", "completed"].map((s) => statusBtn(s).textContent.trim()).join(" | "));
-  statusBtn("completed").click(); await wait(200);
+  await act(() => statusBtn("completed").click(), "the completed filter");
   check("completed filter", JSON.stringify(titles()) === '["Buy milk"]', JSON.stringify(titles()));
-  statusBtn("incomplete").click(); await wait(200);
+  await act(() => statusBtn("incomplete").click(), "the incomplete filter");
   check("incomplete filter", titles().length === 3 && !titles().includes("Buy milk"), JSON.stringify(titles()));
-
-  // --- tag filter combined with status ---
-  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "travel").click(); await wait(200);
+  await act(() => filterTag("travel").click(), "the travel filter");
   check("tag + status filter", JSON.stringify(titles()) === '["Plan trip"]', JSON.stringify(titles()));
-  statusBtn("completed").click(); await wait(200);
-  check("no-match message", $$(".task").length === 0 && !$("#empty").hidden && $("#empty").textContent === "No tasks match these filters.");
-  statusBtn("incomplete").click(); await wait(200);
+  await act(() => statusBtn("completed").click(), "the completed filter");
+  check("no-match message", titles().length === 0 && !$("#empty").hidden && $("#empty").textContent === "No tasks match these filters.");
+  await act(() => statusBtn("incomplete").click(), "the incomplete filter");
 
-  // --- filters persist across reload ---
-  doc = await loadFrame();
+  await open();
   check("filters persist after reload", statusBtn("incomplete").getAttribute("aria-pressed") === "true" &&
-    [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "travel").getAttribute("aria-pressed") === "true" &&
-    JSON.stringify(titles()) === '["Plan trip"]', JSON.stringify(titles()));
-  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "travel").click(); await wait(200);
-  check("clicking active tag clears it", titles().length === 3, JSON.stringify(titles()));
-  statusBtn("all").click(); await wait(200);
+    filterTag("travel").getAttribute("aria-pressed") === "true" && JSON.stringify(titles()) === '["Plan trip"]', JSON.stringify(titles()));
+  await act(() => filterTag("travel").click(), "clearing the travel filter");
+  check("clicking the active tag clears it", titles().length === 3, JSON.stringify(titles()));
+  await act(() => statusBtn("all").click(), "the all filter");
+  await act(() => row("File taxes").querySelector(".tag").click(), "the task's tag chip");
+  check("tag chip on a task applies the filter", JSON.stringify(titles()) === '["File taxes"]', JSON.stringify(titles()));
+});
 
-  // --- clicking a tag on a task applies it ---
-  $$(".task").find((li) => li.querySelector(".title").textContent === "File taxes").querySelector(".tag").click(); await wait(200);
-  check("task tag chip filters", JSON.stringify(titles()) === '["File taxes"]', JSON.stringify(titles()));
-  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.getAttribute("aria-pressed") === "true").click(); await wait(200);
+test("a filter on a deleted tag resets", async () => {
+  await add("Visit grandma", { tags: "family" });
+  await add("Other");
+  await act(() => filterTag("family").click(), "the family filter");
+  await act(() => row("Visit grandma").querySelector(".delete").click(), "the delete");
+  check("tag gone from the filter bar and filter reset", !filterTag("family") && JSON.stringify(titles()) === '["Other"]', JSON.stringify(titles()));
+  await open();
+  check("reset filter is saved too", JSON.stringify(titles()) === '["Other"]', JSON.stringify(titles()));
+});
 
-  // --- editing ---
-  const row = (title) => $$(".task").find((li) => li.querySelector(".title")?.textContent === title);
-  row("Plan trip").querySelector(".edit").click(); await wait(200);
-  let editor = $(".task.editing form");
-  check("edit mode opens with current values", editor && editor.querySelector(".edit-title").value === "Plan trip" && editor.querySelector(".edit-tags").value === "travel" && editor.querySelector(".edit-due").value === ymd(5));
-  editor.querySelector(".edit-title").value = "Plan summer trip";
-  editor.querySelector(".edit-due").value = ymd(-1);
-  editor.querySelector(".edit-tags").value = "Travel, family";
-  editor.requestSubmit(); await wait(200);
-  const edited = row("Plan summer trip");
-  check("edit saves title, due date and tags", edited && edited.classList.contains("overdue") &&
-    JSON.stringify([...edited.querySelectorAll(".tag")].map((t) => t.textContent)) === '["travel","family"]');
+// ======================================================================
+// Editing
+// ======================================================================
 
-  row("Call mom").querySelector(".edit").click(); await wait(200);
-  editor = $(".task.editing form");
-  editor.querySelector(".edit-title").value = "   ";
-  editor.requestSubmit(); await wait(200);
-  check("blank title rejected in edit", $(".task.editing") && !row("   "));
-  editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await wait(200);
+test("editing", async () => {
+  await add("Plan trip", { due: ymd(5), tags: "travel" });
+  await add("Call mom");
+  const editor = await edit("Plan trip", {}, { submit: false });
+  check("edit mode opens with current values", editor.querySelector(".edit-title").value === "Plan trip" &&
+    editor.querySelector(".edit-tags").value === "travel" && editor.querySelector(".edit-due").value === ymd(5));
+  await act(() => editor.querySelector("button.secondary").click(), "cancelling the edit");
+
+  await edit("Plan trip", { title: "Plan summer trip", due: ymd(-1), tags: "Travel, family" });
+  check("edit saves title, due date and tags", row("Plan summer trip")?.classList.contains("overdue") &&
+    JSON.stringify(tagsOf(row("Plan summer trip"))) === '["travel","family"]' && !row("Plan trip"));
+
+  const blank = await edit("Call mom", { title: "   " }, { submit: false });
+  blank.requestSubmit();
+  check("blank title rejected in edit", $(".task.editing") && $(".task.editing .edit-title").value === "");
+  await act(() => blank.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })), "Escape to cancel");
   check("escape cancels edit", !$(".task.editing") && row("Call mom"));
 
-  row("Call mom").querySelector(".edit").click(); await wait(200);
-  $(".task.editing form .edit-tags").value = "family";
-  $(".task.editing form button.secondary").click(); await wait(200);
-  check("cancel discards changes", row("Call mom").querySelectorAll(".tag").length === 0);
+  const cancelled = await edit("Call mom", { tags: "family" }, { submit: false });
+  await act(() => cancelled.querySelector("button.secondary").click(), "cancelling the edit");
+  check("cancel discards changes", tagsOf(row("Call mom")).length === 0);
+  await open();
+  check("cancelled change was never saved", tagsOf(row("Call mom")).length === 0 && !!row("Plan summer trip"));
+});
 
-  // --- completing an overdue task clears the overdue highlight ---
-  row("File taxes").querySelector("input[type=checkbox]").click(); await wait(200);
-  check("done task is not overdue", !row("File taxes").classList.contains("overdue"));
+// ======================================================================
+// Recurring tasks (#5)
+// ======================================================================
 
-  // --- a deleted tag disappears from the filter, and a saved filter on it resets ---
-  [...$("#tag-filter").querySelectorAll(".tag")].find((t) => t.textContent === "family").click(); await wait(200);
-  row("Plan summer trip").querySelector(".delete").click(); await wait(200);
-  check("stale tag filter resets", ![...$("#tag-filter").querySelectorAll(".tag")].some((t) => t.textContent === "family") && titles().length === 3, JSON.stringify(titles()));
-
-  // --- #5 recurring tasks in the UI ---
-  const label = (d) => { const [y, m, dd] = d.split("-").map(Number); return new Date(y, m - 1, dd).toLocaleDateString(undefined, { day: "numeric", month: "short" }); };
-  const rows = (title) => $$(".task").filter((li) => li.querySelector(".title")?.textContent === title);
-  await add("Water plants", ymd(0), "home", "daily");
-  let plants = rows("Water plants");
-  check("recurring task shows its repeat badge", plants.length === 1 && plants[0].querySelector(".repeat")?.textContent === "↻ Daily");
-  plants[0].querySelector("input[type=checkbox]").click(); await wait(300);
-  plants = rows("Water plants");
+test("recurring tasks", async () => {
+  await add("Water plants", { due: ymd(0), tags: "home", repeat: "daily" });
+  check("recurring task shows its repeat badge", row("Water plants").querySelector(".repeat")?.textContent === "↻ Daily");
+  await tick("Water plants");
+  const plants = rows("Water plants");
   const doneCopy = plants.find((li) => li.classList.contains("done"));
   const nextCopy = plants.find((li) => !li.classList.contains("done"));
-  check("ticking a recurring task keeps it done and adds the next one", plants.length === 2 && doneCopy && nextCopy, String(plants.length));
+  check("ticking keeps it done and adds the next one", plants.length === 2 && !!doneCopy && !!nextCopy, String(plants.length));
   check("next occurrence is due tomorrow and keeps tags and repeat",
-    nextCopy && nextCopy.querySelector(".due").textContent === `Due ${label(ymd(1))}` &&
-    nextCopy.querySelector(".tag")?.textContent === "home" && nextCopy.querySelector(".repeat")?.textContent === "↻ Daily");
-  doneCopy.querySelector("input[type=checkbox]").click(); await wait(200);
-  const reTick = rows("Water plants").filter((li) => !li.classList.contains("done"));
-  reTick[0].querySelector("input[type=checkbox]").click(); await wait(300);
+    nextCopy?.querySelector(".due").textContent === `Due ${label(ymd(1))}` &&
+    nextCopy?.querySelector(".tag")?.textContent === "home" && nextCopy?.querySelector(".repeat")?.textContent === "↻ Daily");
+
+  await act(() => doneCopy.querySelector("input[type=checkbox]").click(), "unticking");
+  await act(() => rows("Water plants").find((li) => !li.querySelector("input").checked && li.querySelector(".due").textContent === `Due ${label(ymd(0))}`)
+    .querySelector("input").click(), "re-ticking");
   check("unticking and re-ticking creates no duplicate", rows("Water plants").length === 2, String(rows("Water plants").length));
+  await open();
+  check("both occurrences saved", rows("Water plants").length === 2 && rows("Water plants").filter((li) => li.classList.contains("done")).length === 1);
+});
 
-  await add("Team report", ymd(-20), "work", "weekly");
-  rows("Team report")[0].querySelector("input[type=checkbox]").click(); await wait(300);
-  const report = rows("Team report").find((li) => !li.classList.contains("done"));
-  check("overdue weekly task skips ahead to the next weekly date", rows("Team report").length === 2 && report && report.querySelector(".due").textContent === `Due ${label(ymd(1))}`, report?.querySelector(".due").textContent);
+test("recurring: overdue series and missing dates", async () => {
+  await add("Team report", { due: ymd(-20), tags: "work", repeat: "weekly" });
+  await tick("Team report");
+  const next = rows("Team report").find((li) => !li.classList.contains("done"));
+  check("overdue weekly task skips ahead to the next weekly date", rows("Team report").length === 2 && next?.querySelector(".due").textContent === `Due ${label(ymd(1))}`,
+    next?.querySelector(".due").textContent);
 
-  await add("Stretch", "", "", "daily");
-  check("repeat without a date starts today", rows("Stretch")[0]?.querySelector(".due")?.textContent === `Due ${label(ymd(0))}`);
-
-  rows("Stretch")[0].querySelector(".edit").click(); await wait(200);
-  check("edit form shows the repeat setting", $(".task.editing .edit-repeat")?.value === "daily");
-  $(".task.editing .edit-repeat").value = "none";
-  $(".task.editing form").requestSubmit(); await wait(200);
-  check("setting repeat to None removes the badge", rows("Stretch").length === 1 && !rows("Stretch")[0].querySelector(".repeat"));
-  rows("Stretch")[0].querySelector("input[type=checkbox]").click(); await wait(300);
+  await add("Stretch", { repeat: "daily" });
+  check("repeat without a date starts today", row("Stretch").querySelector(".due")?.textContent === `Due ${label(ymd(0))}`);
+  const editor = await edit("Stretch", {}, { submit: false });
+  check("edit form shows the repeat setting", editor.querySelector(".edit-repeat").value === "daily");
+  editor.querySelector(".edit-repeat").value = "none";
+  await act(() => editor.requestSubmit(), "saving the repeat change");
+  check("setting repeat to None removes the badge", rows("Stretch").length === 1 && !row("Stretch").querySelector(".repeat"));
+  await tick("Stretch");
   check("a task that no longer repeats doesn't spawn", rows("Stretch").length === 1);
+});
 
-  // --- legacy tasks from #3 still load ---
-  document.querySelector("iframe").remove();
-  await wait(100);
-  await new Promise((r) => { const q = indexedDB.deleteDatabase("todo-app"); q.onsuccess = q.onerror = q.onblocked = r; });
-  await seedLegacyTask();
-  localStorage.removeItem("todo-filters");
-  doc = await loadFrame();
-  check("legacy task without due date, tags or repeat renders", titles()[0] === "Legacy task" && !$(".task .due") && !$(".task .tag") && !$(".task .repeat"));
-} catch (e) {
-  check("no exceptions", false, (e && e.stack) || String(e));
+test("recurring: deleting one occurrence", async () => {
+  await add("Gym", { due: ymd(0), repeat: "daily" });
+  await tick("Gym");
+  const next = rows("Gym").find((li) => !li.classList.contains("done"));
+  await act(() => next.querySelector(".delete").click(), "deleting the next occurrence");
+  check("only the next occurrence is deleted", rows("Gym").length === 1 && row("Gym").classList.contains("done"));
+  await open();
+  check("deletion saved and nothing respawned", rows("Gym").length === 1 && row("Gym").classList.contains("done"), String(rows("Gym").length));
+});
+
+test("recurring: editing the due date moves the series", async () => {
+  // A date next year, so "skip ahead to today" never applies and the result is fixed.
+  const year = new Date().getFullYear() + 1;
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  await add("Pay rent", { due: `${year}-01-15`, repeat: "monthly" });
+  await edit("Pay rent", { due: `${year}-01-31` });
+  await tick("Pay rent");
+  const feb = rows("Pay rent").find((li) => !li.classList.contains("done"));
+  const febDate = `${year}-02-${leap ? 29 : 28}`;
+  check("next date follows the edited day, clamped to February", feb?.querySelector(".due").textContent === `Due ${label(febDate)}`, feb?.querySelector(".due").textContent);
+  await act(() => feb.querySelector("input").click(), "ticking February");
+  const mar = rows("Pay rent").find((li) => !li.classList.contains("done"));
+  check("series returns to the 31st in March", mar?.querySelector(".due").textContent === `Due ${label(`${year}-03-31`)}`, mar?.querySelector(".due").textContent);
+});
+
+// ======================================================================
+// Unusual input
+// ======================================================================
+
+test("unusual input", async () => {
+  const long = "A very long task title that keeps going ".repeat(12).trim();
+  const intl = "Buy 🥛 دودھ and pão de queijo";
+  await add(long);
+  await add(intl, { tags: "  Home Office , HOME OFFICE, <i>x</i> ,, WORK " });
+  check("long title kept in full", row(long)?.querySelector(".title").textContent === long);
+  check("long title doesn't widen the page", doc.documentElement.scrollWidth <= doc.documentElement.clientWidth,
+    `${doc.documentElement.scrollWidth} > ${doc.documentElement.clientWidth}`);
+  check("tags trimmed, lowercased, de-duplicated, empties dropped", JSON.stringify(tagsOf(row(intl))) === '["home office","<i>x</i>","work"]', JSON.stringify(tagsOf(row(intl))));
+  check("tag text is not parsed as HTML", !row(intl).querySelector("i"));
+  await open();
+  check("emoji and non-Latin text saved exactly", !!row(intl) && !!row(long), JSON.stringify(titles()));
+});
+
+// ======================================================================
+// Storage failures
+// ======================================================================
+
+test("failed add keeps the input and can be retried", async () => {
+  const restore = breakStorage("add");
+  fill({ title: "Important", tags: "work", due: ymd(2) });
+  $("#new-task").requestSubmit();
+  await waitFor(errorShown, "the error message");
+  check("error is shown", errorShown() && $("#error").textContent.startsWith("Couldn't save"), $("#error").textContent);
+  check("typed values are kept", $("#new-task-title").value === "Important" && $("#new-task-tags").value === "work" && $("#new-task-due").value === ymd(2));
+  check("task is not shown as added", titles().length === 0, JSON.stringify(titles()));
+
+  restore();
+  await act(() => $("#new-task").requestSubmit(), "the retry");
+  check("retry saves the task", JSON.stringify(titles()) === '["Important"]', JSON.stringify(titles()));
+  check("error clears after a successful save", $("#error").hidden);
+  check("form cleared after the retry", $("#new-task-title").value === "");
+  await open();
+  check("retried task is saved exactly once", JSON.stringify(titles()) === '["Important"]', JSON.stringify(titles()));
+});
+
+test("failed add through a database error", async () => {
+  await add("First");
+  // Reuse the existing id, so the database rejects the write itself (a ConstraintError
+  // on the transaction) instead of the call throwing straight away.
+  const id = await new Promise((resolve) => {
+    const request = indexedDB.open(DB_NAME);
+    request.onsuccess = () => {
+      const db = request.result;
+      const keys = db.transaction("tasks").objectStore("tasks").getAllKeys();
+      keys.onsuccess = () => { db.close(); resolve(keys.result[0]); };
+    };
+  });
+  breakStorage("add", function (original, [value]) { return original.call(this, { ...value, id }); });
+  fill({ title: "Second" });
+  $("#new-task").requestSubmit();
+  await waitFor(errorShown, "the error message");
+  check("error is shown", errorShown());
+  check("typed title is kept", $("#new-task-title").value === "Second");
+  await open();
+  check("nothing extra saved", JSON.stringify(titles()) === '["First"]', JSON.stringify(titles()));
+});
+
+test("failed complete, edit and delete leave saved data alone", async () => {
+  await add("Laundry", { tags: "home" });
+  breakStorage("put");
+  await tick("Laundry");
+  check("error is shown after a failed complete", errorShown());
+  check("checkbox goes back to unticked", !row("Laundry").querySelector("input").checked && !row("Laundry").classList.contains("done"));
+
+  // Each failure starts from a freshly opened page, so the error seen is this step's.
+  await open();
+  breakStorage("put");
+  const editor = await edit("Laundry", { title: "Laundry and ironing" }, { submit: false });
+  check("no error before the edit is saved", !errorShown());
+  editor.requestSubmit();
+  await waitFor(errorShown, "the edit error");
+  check("editor stays open with the new title after a failed edit", $(".task.editing .edit-title")?.value === "Laundry and ironing");
+
+  await open();
+  breakStorage("delete");
+  check("no error before the delete", !errorShown());
+  row("Laundry").querySelector(".delete").click();
+  await waitFor(errorShown, "the delete error");
+  check("task still listed after a failed delete", !!row("Laundry"));
+
+  await open();
+  check("saved data unchanged", JSON.stringify(titles()) === '["Laundry"]' && !row("Laundry").classList.contains("done") && JSON.stringify(tagsOf(row("Laundry"))) === '["home"]',
+    JSON.stringify(titles()));
+  check("no error once storage works again", $("#error").hidden);
+});
+
+test("storage that can't be opened shows an error", async () => {
+  // A newer version of the database than the app knows makes opening it fail.
+  (await createDb(2)).close();
+  await open({ expectRender: false });
+  await waitFor(errorShown, "the load error");
+  check("load error is shown", $("#error").textContent.startsWith("Couldn't load"), $("#error").textContent);
+}, { openApp: false });
+
+test("an open app doesn't block deleting its database", async () => {
+  await add("Anything");
+  // Without the app closing its connection on request, this delete would wait forever.
+  const deleted = await Promise.race([deleteDb().then(() => true), new Promise((r) => setTimeout(() => r(false), TIMEOUT_MS))]);
+  check("database deleted while the app is open", deleted);
+});
+
+// ======================================================================
+// Runner
+// ======================================================================
+
+for (const { name, fn, openApp } of tests) {
+  current = name;
+  const before = log.length;
+  try {
+    await reset();
+    if (openApp) await open();
+    await fn();
+  } catch (e) {
+    check("ran without errors", false, (e && e.message) || String(e));
+  }
+  if (log.length === before) check("made at least one check", false);
 }
+frame?.remove();
+await deleteDb().catch(() => {});
+localStorage.removeItem(FILTERS_KEY);
 out.textContent = "DONE\n" + log.join("\n");
 </script>

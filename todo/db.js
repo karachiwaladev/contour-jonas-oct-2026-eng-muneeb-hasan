@@ -1,5 +1,9 @@
 // Client-side task storage backed by IndexedDB.
-const DB_NAME = "todo-app";
+
+// Tests open the app as index.html?ns=test so they get their own database and saved
+// filters, and never touch the real tasks.
+export const NAMESPACE = new URLSearchParams(location.search).get("ns");
+const DB_NAME = NAMESPACE ? `todo-app-${NAMESPACE}` : "todo-app";
 const DB_VERSION = 1;
 const STORE = "tasks";
 
@@ -13,7 +17,11 @@ function openDb() {
         const store = request.result.createObjectStore(STORE, { keyPath: "id", autoIncrement: true });
         store.createIndex("createdAt", "createdAt");
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        // Let another tab or the tests delete or upgrade the database instead of blocking it.
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
       request.onerror = () => reject(request.error);
     });
   }
