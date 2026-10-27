@@ -56,6 +56,8 @@ If there's no usable account, stop before any writes and tell the user to run `!
 
 If the working tree has uncommitted changes you didn't make, don't build on top of them. Report them and handle only question tickets on this pass.
 
+**One session per working tree.** Another Claude session may be working in the same folder: `git worktree list` shows other worktrees, and commits or edits appear that you didn't make. Two sessions in one folder can switch branches under each other, and one session's Stop hook can commit the other's half-finished work. When that's possible, build in your own worktree (stage 4, step 1).
+
 ## 3. Fetch issues and pick the ones that need work
 
 Use the REST endpoint, not `gh issue list`. The search index behind `gh issue list` can briefly miss a just-reopened issue.
@@ -164,16 +166,24 @@ From stage 4 on, the approved `plan` comment is the contract. Don't re-read the 
    ```
 
    If the branch already exists (a revised plan or requested changes), switch to it and keep working there. Don't recreate or reset it.
+
+   If another session may share this folder (section 2), don't switch branches here. Build in a worktree of your own in the scratchpad, and run every command for the ticket inside it:
+
+   ```bash
+   git fetch origin && git worktree add <scratchpad>/issue-4 -b factory/issue-4-filters-due-dates-tags origin/main
+   ```
+
+   The Stop hook doesn't commit there, so commit and push yourself. Remove the worktree with `git worktree remove` once the PR is open.
 2. **Build exactly the approved plan.** If you discover the plan can't work as written, don't improvise a different design. Post a revised `plan` and wait. Follow `CLAUDE.md` conventions: new projects go in their own top-level folder with a `README.md`, and changes to an existing project stay inside its folder. Prefer no-build, dependency-free code so it runs from a fresh clone.
 3. **Run any existing tests.** They must still pass, and you should add tests for the new behaviour.
-4. **Verify in a real browser with the chrome-devtools MCP tools.** Serve the project (e.g. `python -m http.server <port>` in the background), then:
-   - open the page with `new_page`;
-   - exercise every feature in the plan with `fill`, `click`, `press_key` and `evaluate_script`, checking the results;
+4. **Verify in a real browser with the chrome-devtools MCP tools.** Serve the project (e.g. `python -m http.server <port>` in the background). The server takes a moment to start, so poll the URL until it answers 200 before opening it. Then:
+   - open the page with `new_page` in a fresh `isolatedContext` for each run. Chrome caches ES modules across reloads, so a reused context can test yesterday's code;
+   - exercise every feature in the plan with `fill`, `click`, `press_key` and `evaluate_script`, checking the results. Take a new `take_snapshot` after anything that re-renders, because element uids from an older snapshot go stale ("did not become interactive");
    - confirm `list_console_messages` shows no errors;
    - capture screenshots with `take_screenshot` (`filePath`) into `<project>/screenshots/issue-N-<what>.png`, one per key state named in the plan.
 
    Stop the server afterwards. If the plugin's `chrome-devtools` server fails with *"The browser is already running"*, use the project's `chrome-devtools-isolated` server from `.mcp.json`, which runs with `--isolated`. Don't open a PR for anything you haven't seen working in the browser.
-5. **Update the index.** If you added a project folder, add its row to the `CLAUDE.md` index in the same commit, and keep `CLAUDE.md` within any size rule it states.
+5. **Update the index and docs.** If you added a project folder, add its row to the `CLAUDE.md` index in the same commit, and keep `CLAUDE.md` within any size rule it states. Docs, index rows and PR text describe only what the branch actually contains. Don't mention a workflow, test or file that isn't committed, even if one is planned.
 6. **Commit and push the branch.** Stage only this ticket's files and screenshots (`git add <paths>`, not `git add -A`). Then run the secret scan. It prints any staged file whose name or added lines look like a key or token, and exits non-zero. If it flags anything, unstage that file and remove the secret before committing. Never commit around the scan.
 
    ```bash
@@ -267,6 +277,23 @@ Start every body with its stage marker on the first line (e.g. `<!-- factory-loo
 ```bash
 gh issue comment N --repo OWNER/NAME --body-file /path/to/comment.md
 ```
+
+### When a step fails
+
+Read the error before acting on it. These are the failures past runs actually hit, and what each one means:
+
+| What you see | What it means | What to do |
+|---|---|---|
+| "The user doesn't want to proceed with this tool use" | A person rejected that action | Stop it. Don't retry it or reword it. Report it and wait for the user. |
+| Auto mode denied the action (e.g. `[Self-Modification]`) | A safety rule, not a glitch | Treat it like a blocked call: if the ticket needs it, it's **needs a human** (5c). |
+| Auto mode "gave no verdict" or timed out | A transient failure of the check | Retry the same command once, unchanged. |
+| "File has been modified since read" | Something else changed the file | Re-read it. If you didn't change it, run `git status`: another session may be working here (section 2). |
+| In PowerShell, `bash` fails with a `WSL ... execvpe(/bin/bash)` error | That `bash` is WSL, not Git Bash, so the secret scan didn't run | Run bash commands with the Bash tool, never `bash` from PowerShell. A commit chained after the failed scan correctly didn't happen. |
+| `unexpected EOF`, a `SyntaxError`, or real line breaks where you wrote `\n` | The shell mangled quotes, backslashes or escapes in an inline script | Write multi-line scripts and edits to a file with the Write tool and run the file. After generated edits, check syntax (`node --check file`). |
+| `gh: unknown shorthand flag` | `gh api` has no `-c` (compact) flag | Use `--jq` with a string template, e.g. `--jq '"\(.a) \(.b)"'`. |
+| A non-zero exit code but the expected output | Usually the last command in a chain, or a deliberate check | Judge by the output. Rerun only the part that actually failed. |
+
+Report every failure once in the step 7 report, with the exact error. Don't retry the same failing call in a loop: two identical failures mean the approach is wrong.
 
 ## 6. Close as completed
 
